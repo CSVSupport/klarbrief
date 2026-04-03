@@ -97,7 +97,7 @@ function FileUploader({ onFileContent, onTextContent }) {
           });
           const data = await resp.json();
           const extractedText = data.content?.[0]?.text || "";
-          onFileContent?.({ base64, mediaType, extractedText, isImage, isPdf });
+          onFileContent?.({ base64, mediaType, extractedText, isImage, isPdf, fileName: file.name });
           onTextContent?.(extractedText);
         } catch (err) {
           console.error("Vision API error:", err);
@@ -1070,6 +1070,7 @@ function AuthPage({ mode, setPage, onLogin }) {
     if (mode === "register" && name && email && pass) { onLogin({ name, email, isAdmin: email.toLowerCase() === ADMIN_EMAIL }); setPage("dashboard"); }
     if (mode === "login" && email && pass) { onLogin({ name: email.split("@")[0], email, isAdmin: email.toLowerCase() === ADMIN_EMAIL }); setPage("dashboard"); }
   };
+  const handleKeyDown = (e) => { if (e.key === "Enter") handleSubmit(); };
   return <div style={{ minHeight: "80vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "40px 20px", background: brand.bgMuted }}>
     <Card style={{ maxWidth: 440, width: "100%", padding: 40 }}>
       <div style={{ textAlign: "center", marginBottom: 32 }}>
@@ -1083,9 +1084,11 @@ function AuthPage({ mode, setPage, onLogin }) {
         <span style={{ position: "absolute", top: -8, right: -8, padding: "2px 8px", borderRadius: 10, background: brand.accent, color: "#fff", fontSize: 10, fontWeight: 700 }}>Bald</span>
       </button>
       <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "0 0 24px" }}><div style={{ flex: 1, height: 1, background: brand.borderLight }} /><span style={{ fontSize: 13, color: brand.textMuted }}>oder mit E-Mail</span><div style={{ flex: 1, height: 1, background: brand.borderLight }} /></div>
+      <div onKeyDown={handleKeyDown}>
       {mode === "register" && <Input label="Name" value={name} onChange={setName} placeholder="Dein Name" icon={Users} />}
       <Input label="E-Mail" type="email" value={email} onChange={setEmail} placeholder="name@beispiel.de" icon={Mail} />
       <Input label="Passwort" type="password" value={pass} onChange={setPass} placeholder="••••••••" icon={Lock} />
+      </div>
       <Btn onClick={handleSubmit} style={{ width: "100%", marginTop: 8 }}>{mode === "login" ? "Anmelden" : "Kostenlos registrieren"}</Btn>
       <p style={{ textAlign: "center", marginTop: 24, fontSize: 14, color: brand.textMuted }}>
         {mode === "login" ? "Noch kein Account? " : "Bereits registriert? "}
@@ -1099,7 +1102,11 @@ function AuthPage({ mode, setPage, onLogin }) {
 // DASHBOARD
 // ═══════════════════════════════════════════
 function DashboardPage({ user, setUser, setPage }) {
-  const [projects, setProjects] = useState([]);
+  // Load from localStorage with user-scoped keys
+  const storageKey = (k) => `kb_${user?.email || "anon"}_${k}`;
+  const loadState = (key, fallback) => { try { const s = localStorage.getItem(storageKey(key)); return s ? JSON.parse(s) : fallback; } catch { return fallback; } };
+
+  const [projects, setProjects] = useState(() => loadState("projects", []));
   const [activeProject, setActiveProject] = useState(null);
   const [showNewProject, setShowNewProject] = useState(false);
   const [showAnalyze, setShowAnalyze] = useState(false);
@@ -1110,13 +1117,18 @@ function DashboardPage({ user, setUser, setPage }) {
   const [fileData, setFileData] = useState(null);
   const [editorIntent, setEditorIntent] = useState(""); const [editorTone, setEditorTone] = useState("sachlich"); const [editorResult, setEditorResult] = useState(""); const [editorLoading, setEditorLoading] = useState(false);
   const [editorAktenzeichen, setEditorAktenzeichen] = useState("");
+  const [showDocument, setShowDocument] = useState(null);
 
-  // Profile / Settings
-  const [profile, setProfile] = useState({
+  // Profile loaded from localStorage
+  const [profile, setProfile] = useState(() => loadState("profile", {
     vorname: user?.name?.split(" ")[0] || "", nachname: user?.name?.split(" ").slice(1).join(" ") || "",
     strasse: "", plz: "", ort: "", email: user?.email || "", telefon: "",
     plan: "free", planStart: new Date().toISOString().split("T")[0],
-  });
+  }));
+
+  // Persist projects & profile on change
+  useEffect(() => { try { localStorage.setItem(storageKey("projects"), JSON.stringify(projects)); } catch(e) { console.warn("Storage full", e); } }, [projects]);
+  useEffect(() => { try { localStorage.setItem(storageKey("profile"), JSON.stringify(profile)); } catch(e) { console.warn("Storage full", e); } }, [profile]);
   const updateProfile = (key, val) => setProfile(p => ({ ...p, [key]: val }));
   const fullName = `${profile.vorname} ${profile.nachname}`.trim() || user?.name || "Nutzer";
   const fullAddress = [profile.strasse, `${profile.plz} ${profile.ort}`].filter(s => s.trim()).join("\n");
@@ -1191,7 +1203,12 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
 
     // Auto-assign to project
     if (result) {
-      const nl = { id: Date.now(), date: new Date().toLocaleDateString("de-DE"), direction: "eingehend", type: result.kategorie || "Brief", summary: result.klartext, analyzed: true };
+      const nl = {
+        id: Date.now(), date: new Date().toLocaleDateString("de-DE"), direction: "eingehend",
+        type: result.kategorie || "Brief", summary: result.klartext, analyzed: true,
+        document: fileData ? { base64: fileData.base64, mediaType: fileData.mediaType, isImage: fileData.isImage, isPdf: fileData.isPdf, fileName: fileData.fileName || "Dokument" } : null,
+        originalText: analyzeText || null,
+      };
 
       if (activeProject) {
         // If we're inside a project, add to that project
@@ -1366,7 +1383,9 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
       {activeProject.letters.map(l => (
         <div key={l.id} style={{ position: "relative", marginBottom: 20 }}>
           <div style={{ position: "absolute", left: -32, top: 4, width: 24, height: 24, borderRadius: "50%", background: l.direction === "eingehend" ? brand.info : brand.success, display: "flex", alignItems: "center", justifyContent: "center" }}>{l.direction === "eingehend" ? <Download size={12} color="#fff" /> : <Send size={12} color="#fff" />}</div>
-          <Card><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}><Badge color={l.direction === "eingehend" ? brand.info : brand.success} bg={l.direction === "eingehend" ? `${brand.info}15` : `${brand.success}15`}>{l.direction === "eingehend" ? "Eingehend" : "Ausgehend"}</Badge><span style={{ fontSize: 13, color: brand.textMuted }}>{l.date}</span></div><h4 style={{ fontSize: 16, fontWeight: 700, color: brand.text, margin: "0 0 6px" }}>{l.type}</h4><p style={{ fontSize: 14, color: brand.textMuted, lineHeight: 1.6, margin: 0 }}>{l.summary}</p></Card>
+          <Card><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}><Badge color={l.direction === "eingehend" ? brand.info : brand.success} bg={l.direction === "eingehend" ? `${brand.info}15` : `${brand.success}15`}>{l.direction === "eingehend" ? "Eingehend" : "Ausgehend"}</Badge><span style={{ fontSize: 13, color: brand.textMuted }}>{l.date}</span></div><h4 style={{ fontSize: 16, fontWeight: 700, color: brand.text, margin: "0 0 6px" }}>{l.type}</h4><p style={{ fontSize: 14, color: brand.textMuted, lineHeight: 1.6, margin: "0 0 8px" }}>{l.summary}</p>
+            {l.document && <button onClick={(e) => { e.stopPropagation(); setShowDocument(l.document); }} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 6, border: `1px solid ${brand.borderLight}`, background: brand.bgMuted, color: brand.primary, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{l.document.isImage ? <Image size={13} /> : <File size={13} />} {l.document.fileName || "Dokument anzeigen"}</button>}
+          </Card>
         </div>
       ))}
     </div>
@@ -1404,9 +1423,35 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
         </div>
       </div>}
     </Modal>
+    {/* Document Viewer */}
+    <Modal open={!!showDocument} onClose={() => setShowDocument(null)} title={showDocument?.fileName || "Dokument"} wide>
+      {showDocument && <div>
+        {showDocument.isImage && showDocument.base64 && (
+          <div style={{ borderRadius: 8, overflow: "hidden", border: `1px solid ${brand.borderLight}`, marginBottom: 16 }}>
+            <img src={`data:${showDocument.mediaType};base64,${showDocument.base64}`} alt="Dokument" style={{ width: "100%", height: "auto", display: "block" }} />
+          </div>
+        )}
+        {showDocument.isPdf && showDocument.base64 && (
+          <div style={{ marginBottom: 16 }}>
+            <iframe src={`data:application/pdf;base64,${showDocument.base64}`} style={{ width: "100%", height: 500, border: `1px solid ${brand.borderLight}`, borderRadius: 8 }} title="PDF Vorschau" />
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 10 }}>
+          {showDocument.base64 && <Btn variant="outline" size="sm" onClick={() => {
+            const link = document.createElement("a");
+            link.href = `data:${showDocument.mediaType};base64,${showDocument.base64}`;
+            link.download = showDocument.fileName || "dokument";
+            link.click();
+          }}><Download size={14} /> Herunterladen</Btn>}
+        </div>
+      </div>}
+    </Modal>
   </div>;
 }
 
+// ═══════════════════════════════════════════
+// ADMIN
+// ═══════════════════════════════════════════
 function AdminPage() {
   const [tab, setTab] = useState("overview");
   const [searchTerm, setSearchTerm] = useState("");
@@ -1504,11 +1549,21 @@ function LegalPage({ page }) {
 // ═══════════════════════════════════════════
 export default function App() {
   const [page, setPage] = useState("home");
-  const [user, setUser] = useState(null);
-  const [showCookies, setShowCookies] = useState(true);
+  const [user, setUser] = useState(() => { try { const s = localStorage.getItem("kb_user"); return s ? JSON.parse(s) : null; } catch { return null; } });
+  const [showCookies, setShowCookies] = useState(() => !localStorage.getItem("kb_cookies_accepted"));
   const isLoggedIn = !!user;
   const isAdmin = user?.isAdmin;
+
+  // Persist user login
+  useEffect(() => {
+    if (user) localStorage.setItem("kb_user", JSON.stringify(user));
+    else localStorage.removeItem("kb_user");
+  }, [user]);
+
   useEffect(() => { window.scrollTo({ top: 0, behavior: "smooth" }); }, [page]);
+
+  const handleLogout = () => { setUser(null); localStorage.removeItem("kb_user"); setPage("home"); };
+  const handleCookieAccept = () => { setShowCookies(false); localStorage.setItem("kb_cookies_accepted", "1"); };
 
   const renderPage = () => {
     switch (page) {
@@ -1542,9 +1597,9 @@ export default function App() {
       @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
       @media print { nav, footer, button, .no-print { display: none !important; } }
     `}</style>
-    <Navbar page={page} setPage={setPage} isLoggedIn={isLoggedIn} isAdmin={isAdmin} onLogout={() => { setUser(null); setPage("home"); }} />
+    <Navbar page={page} setPage={setPage} isLoggedIn={isLoggedIn} isAdmin={isAdmin} onLogout={handleLogout} />
     {renderPage()}
     {!["login","register"].includes(page) && <Footer setPage={setPage} />}
-    {showCookies && <CookieBanner onAccept={() => setShowCookies(false)} />}
+    {showCookies && <CookieBanner onAccept={handleCookieAccept} />}
   </div>;
 }

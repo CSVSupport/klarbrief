@@ -1167,11 +1167,60 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
     setEditorLoading(false);
   };
 
+  const [savedToProject, setSavedToProject] = useState(null);
+
+  const findMatchingProject = (result) => {
+    if (!result?.behoerde) return null;
+    const behoerde = result.behoerde.toLowerCase().trim();
+    return projects.find(p => {
+      const pB = p.behoerde.toLowerCase().trim();
+      if (pB === behoerde) return true;
+      // Fuzzy: check if key words overlap
+      const words = behoerde.split(/\s+/).filter(w => w.length > 3);
+      const pWords = pB.split(/\s+/).filter(w => w.length > 3);
+      const overlap = words.filter(w => pWords.some(pw => pw.includes(w) || w.includes(pw)));
+      return overlap.length >= 1 && p.category === result.kategorie;
+    });
+  };
+
   const handleAnalyze = async () => {
     if (!analyzeText.trim() && !fileData) return;
-    setAnalyzing(true);
+    setAnalyzing(true); setSavedToProject(null);
     const result = await analyzeWithAI(analyzeText, fileData);
     setAnalyzeResult(result);
+
+    // Auto-assign to project
+    if (result) {
+      const nl = { id: Date.now(), date: new Date().toLocaleDateString("de-DE"), direction: "eingehend", type: result.kategorie || "Brief", summary: result.klartext, analyzed: true };
+
+      if (activeProject) {
+        // If we're inside a project, add to that project
+        const up = projects.map(p => p.id === activeProject.id ? { ...p, letters: [...p.letters, nl], ampel: result.ampel, frist: result.frist || p.frist, behoerde: result.behoerde || p.behoerde } : p);
+        setProjects(up);
+        setActiveProject(prev => ({ ...prev, letters: [...prev.letters, nl], ampel: result.ampel }));
+        setSavedToProject(activeProject);
+      } else {
+        // Check for matching existing project
+        const match = findMatchingProject(result);
+        if (match) {
+          const up = projects.map(p => p.id === match.id ? { ...p, letters: [...p.letters, nl], ampel: result.ampel, frist: result.frist || p.frist, behoerde: result.behoerde || p.behoerde } : p);
+          setProjects(up);
+          setSavedToProject(match);
+        } else {
+          // Create new project
+          const np = {
+            id: Date.now() + 1,
+            name: result.kategorie && result.behoerde ? `${result.kategorie} — ${result.behoerde}` : result.behoerde || result.kategorie || "Neuer Vorgang",
+            category: result.kategorie || "Sonstiges",
+            status: "offen", ampel: result.ampel || "gelb",
+            behoerde: result.behoerde || "Unbekannt",
+            frist: result.frist || null, aktenzeichen: "", letters: [nl],
+          };
+          setProjects(prev => [np, ...prev]);
+          setSavedToProject(np);
+        }
+      }
+    }
     setAnalyzing(false);
   };
 
@@ -1179,14 +1228,6 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
     if (!npName) return;
     const np = { id: Date.now(), name: npName, category: npCat, status: "offen", ampel: "gruen", behoerde: "Noch nicht zugeordnet", frist: null, aktenzeichen: "", letters: [] };
     setProjects([np, ...projects]); setNpName(""); setShowNewProject(false); setActiveProject(np); setView("project");
-  };
-
-  const addLetterToProject = () => {
-    if (!analyzeResult || !activeProject) return;
-    const nl = { id: Date.now(), date: new Date().toLocaleDateString("de-DE"), direction: "eingehend", type: analyzeResult.kategorie, summary: analyzeResult.klartext, analyzed: true };
-    const up = projects.map(p => p.id === activeProject.id ? { ...p, letters: [...p.letters, nl], ampel: analyzeResult.ampel, frist: analyzeResult.frist, behoerde: analyzeResult.behoerde || p.behoerde } : p);
-    setProjects(up); setActiveProject({ ...activeProject, letters: [...activeProject.letters, nl], ampel: analyzeResult.ampel });
-    setShowAnalyze(false); setAnalyzeText(""); setAnalyzeResult(null); setFileData(null);
   };
 
   const dashTabs = [["overview","Übersicht"],["settings","Einstellungen"]];
@@ -1290,9 +1331,19 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
       <Input textarea value={analyzeText} onChange={setAnalyzeText} placeholder="Text des Behördenbriefs..." icon={FileText} />
       <Btn onClick={handleAnalyze} style={{ width: "100%" }}>{analyzing ? <><RefreshCw size={16} style={{ animation: "spin 1s linear infinite" }} /> Analysiere...</> : <><Zap size={16} /> Analysieren</>}</Btn>
       {analyzeResult && <div style={{ marginTop: 20 }}>
+        {savedToProject && <div style={{ padding: 14, borderRadius: 10, background: `${brand.success}08`, border: `1px solid ${brand.success}30`, marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
+          <CheckCircle size={20} style={{ color: brand.success }} />
+          <div><span style={{ fontSize: 14, fontWeight: 600, color: brand.success }}>Automatisch gespeichert in: </span><span style={{ fontSize: 14, fontWeight: 700, color: brand.text }}>{savedToProject.name}</span>
+            <div style={{ fontSize: 12, color: brand.textMuted, marginTop: 2 }}>{projects.find(p => p.id === savedToProject.id) && findMatchingProject(analyzeResult) ? "Bestehendes Projekt erkannt" : "Neues Projekt erstellt"}</div>
+          </div>
+        </div>}
         <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}><AmpelBadge level={analyzeResult.ampel} /><Badge>{analyzeResult.kategorie}</Badge>{analyzeResult.frist && <Badge color={brand.danger} bg={`${brand.danger}10`}>Frist: {analyzeResult.frist}</Badge>}</div>
         <div style={{ padding: 16, background: brand.bgMuted, borderRadius: 10, marginBottom: 12 }}><p style={{ margin: 0, fontSize: 15, lineHeight: 1.7 }}>{analyzeResult.klartext}</p></div>
         {analyzeResult.todos?.map((t, i) => <div key={i} style={{ display: "flex", gap: 8, padding: "6px 0", fontSize: 14 }}><CheckCircle size={16} style={{ color: brand.success, flexShrink: 0 }} />{t}</div>)}
+        <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+          {savedToProject && <Btn variant="primary" onClick={() => { setShowAnalyze(false); setAnalyzeText(""); setAnalyzeResult(null); setFileData(null); setSavedToProject(null); setActiveProject(savedToProject); setView("project"); }}>Projekt öffnen <ArrowRight size={14} /></Btn>}
+          <Btn variant="outline" onClick={() => { setAnalyzeText(""); setAnalyzeResult(null); setFileData(null); setSavedToProject(null); }}>Nächsten Brief scannen</Btn>
+        </div>
       </div>}
     </Modal>
   </div>;
@@ -1343,7 +1394,15 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
       <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "8px 0 16px" }}><div style={{ flex: 1, height: 1, background: brand.borderLight }} /><span style={{ fontSize: 13, color: brand.textMuted }}>oder Text</span><div style={{ flex: 1, height: 1, background: brand.borderLight }} /></div>
       <Input textarea value={analyzeText} onChange={setAnalyzeText} placeholder="Brief-Text..." icon={FileText} />
       <Btn onClick={handleAnalyze} style={{ width: "100%" }}>{analyzing ? <><RefreshCw size={16} style={{ animation: "spin 1s linear infinite" }} /> Analysiere...</> : <><Zap size={16} /> Analysieren</>}</Btn>
-      {analyzeResult && <div style={{ marginTop: 20 }}><div style={{ display: "flex", gap: 8, marginBottom: 12 }}><AmpelBadge level={analyzeResult.ampel} /></div><div style={{ padding: 16, background: brand.bgMuted, borderRadius: 10, marginBottom: 12 }}><p style={{ margin: 0, fontSize: 15, lineHeight: 1.7 }}>{analyzeResult.klartext}</p></div><Btn onClick={addLetterToProject} variant="accent" style={{ width: "100%", marginTop: 12 }}>Zum Projekt hinzufügen</Btn></div>}
+      {analyzeResult && <div style={{ marginTop: 20 }}>
+        <div style={{ padding: 14, borderRadius: 10, background: `${brand.success}08`, border: `1px solid ${brand.success}30`, marginBottom: 12, display: "flex", alignItems: "center", gap: 10 }}><CheckCircle size={18} style={{ color: brand.success }} /><span style={{ fontSize: 14, fontWeight: 600, color: brand.success }}>Brief gespeichert in: {activeProject.name}</span></div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}><AmpelBadge level={analyzeResult.ampel} /></div>
+        <div style={{ padding: 16, background: brand.bgMuted, borderRadius: 10, marginBottom: 12 }}><p style={{ margin: 0, fontSize: 15, lineHeight: 1.7 }}>{analyzeResult.klartext}</p></div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <Btn variant="primary" onClick={() => { setShowAnalyze(false); setAnalyzeText(""); setAnalyzeResult(null); setFileData(null); setSavedToProject(null); }}>Fertig</Btn>
+          <Btn variant="outline" onClick={() => { setAnalyzeText(""); setAnalyzeResult(null); setFileData(null); setSavedToProject(null); }}>Nächsten Brief</Btn>
+        </div>
+      </div>}
     </Modal>
   </div>;
 }

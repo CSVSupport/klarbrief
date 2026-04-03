@@ -1098,7 +1098,7 @@ function AuthPage({ mode, setPage, onLogin }) {
 // ═══════════════════════════════════════════
 // DASHBOARD
 // ═══════════════════════════════════════════
-function DashboardPage({ user, setPage }) {
+function DashboardPage({ user, setUser, setPage }) {
   const [projects, setProjects] = useState([]);
   const [activeProject, setActiveProject] = useState(null);
   const [showNewProject, setShowNewProject] = useState(false);
@@ -1109,6 +1109,63 @@ function DashboardPage({ user, setPage }) {
   const [analyzeText, setAnalyzeText] = useState(""); const [analyzeResult, setAnalyzeResult] = useState(null); const [analyzing, setAnalyzing] = useState(false);
   const [fileData, setFileData] = useState(null);
   const [editorIntent, setEditorIntent] = useState(""); const [editorTone, setEditorTone] = useState("sachlich"); const [editorResult, setEditorResult] = useState(""); const [editorLoading, setEditorLoading] = useState(false);
+  const [editorAktenzeichen, setEditorAktenzeichen] = useState("");
+
+  // Profile / Settings
+  const [profile, setProfile] = useState({
+    vorname: user?.name?.split(" ")[0] || "", nachname: user?.name?.split(" ").slice(1).join(" ") || "",
+    strasse: "", plz: "", ort: "", email: user?.email || "", telefon: "",
+    plan: "free", planStart: new Date().toISOString().split("T")[0],
+  });
+  const updateProfile = (key, val) => setProfile(p => ({ ...p, [key]: val }));
+  const fullName = `${profile.vorname} ${profile.nachname}`.trim() || user?.name || "Nutzer";
+  const fullAddress = [profile.strasse, `${profile.plz} ${profile.ort}`].filter(s => s.trim()).join("\n");
+
+  const handleGenerateLetter = async () => {
+    if (!editorIntent.trim()) return;
+    setEditorLoading(true);
+    const senderBlock = fullAddress
+      ? `${fullName}\n${fullAddress}${profile.telefon ? "\nTel.: " + profile.telefon : ""}\nE-Mail: ${profile.email}`
+      : `${fullName}\n[Adresse in Einstellungen hinterlegen]\nE-Mail: ${profile.email}`;
+    const empfaenger = activeProject?.behoerde || "[Empfänger]";
+    const akz = editorAktenzeichen || activeProject?.aktenzeichen || "";
+    const datum = new Date().toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
+    const projectCtx = activeProject ? `\nPROJEKT: ${activeProject.name}, Behörde: ${activeProject.behoerde}, Aktenzeichen: ${akz || "unbekannt"}\nSchriftverkehr: ${activeProject.letters.map(l => `${l.date}: ${l.direction} — ${l.summary}`).join("; ")}` : "";
+
+    const sysPrompt = `Du bist KlarBrief, ein professioneller Briefgenerator für Behördenkorrespondenz.
+
+STRIKTE FORMAT-VORGABEN (DIN 5008):
+1. ABSENDER (oben links): ${senderBlock}
+2. EMPFÄNGER: ${empfaenger}
+3. DATUM (rechtsbündig): ${datum}
+4. ZEICHEN: ${akz ? "Ihr Zeichen: " + akz : "Wenn Aktenzeichen bekannt, IMMER als 'Ihr Zeichen:' aufführen"}
+5. BETREFF: Immer konkrete Betreffzeile mit Bezug zum Vorgang
+6. ANREDE: "Sehr geehrte Damen und Herren,"
+7. BRIEFTEXT:
+   - Sachlich, klar, professionell
+   - IMMER Rechtsgrundlagen und §§ wo anwendbar (z.B. § 33 AO, § 70 SGG, § 556 BGB, § 355 BGB, § 536 BGB)
+   - Bei Widersprüchen: Rechtsbehelf benennen, Frist referenzieren
+   - Konkretes Ergebnis fordern
+   - Antwortfrist setzen (14 Tage üblich)
+   - Hinweis auf Rechtsbehelfsbelehrung wo zutreffend
+8. GRUSSFORMEL: "Mit freundlichen Grüßen" + Name
+9. ANLAGEN: wenn relevant
+STIL: ${editorTone === "sachlich" ? "Formal, nüchtern, respektvoll" : editorTone === "fordernd" ? "Bestimmt, mit Nachdruck, Fristsetzungen und Konsequenzen" : "Freundlich, kooperativ, lösungsorientiert"}
+${projectCtx}
+NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. Aktenzeichen der Gegenseite MUSS referenziert werden.`;
+
+    try {
+      const resp = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: 1500, system: sysPrompt,
+          messages: [{ role: "user", content: `Erstelle einen professionellen Brief. Anliegen: ${editorIntent}` }] })
+      });
+      const data = await resp.json();
+      setEditorResult(data.content?.[0]?.text || "Brief konnte nicht generiert werden.");
+    } catch {
+      setEditorResult(`${senderBlock}\n\n${empfaenger}\n\n${datum}\n${akz ? "Ihr Zeichen: " + akz + "\n" : ""}\n**Betreff: ${editorIntent}**\n\nSehr geehrte Damen und Herren,\n\nhiermit möchte ich ${editorIntent.toLowerCase()}.\n\nIch bitte um Bearbeitung innerhalb von 14 Tagen.\n\nMit freundlichen Grüßen\n\n${fullName}`);
+    }
+    setEditorLoading(false);
+  };
 
   const handleAnalyze = async () => {
     if (!analyzeText.trim() && !fileData) return;
@@ -1118,25 +1175,9 @@ function DashboardPage({ user, setPage }) {
     setAnalyzing(false);
   };
 
-  const handleGenerateLetter = async () => {
-    if (!editorIntent.trim()) return;
-    setEditorLoading(true);
-    try {
-      const context = activeProject ? `Projekt: ${activeProject.name}, Behörde: ${activeProject.behoerde}` : "Allgemein";
-      const resp = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: 1000,
-          system: `Du bist KlarBrief und erstellst formelle Briefe (DIN 5008). Ton: ${editorTone}. Kontext: ${context}. Vollständiger Brief mit Absender, Empfänger, Betreff, Anrede, Text, Grußformel. Nur Brieftext, kein JSON, kein Markdown.`,
-          messages: [{ role: "user", content: `Brief erstellen: ${editorIntent}` }] })
-      });
-      const data = await resp.json();
-      setEditorResult(data.content?.[0]?.text || "Brief konnte nicht generiert werden.");
-    } catch { setEditorResult(`${user?.name}\nKiefernweg 1\n53474 Bad Neuenahr-Ahrweiler\n\n${activeProject?.behoerde || "Empfänger"}\n\nDatum: ${new Date().toLocaleDateString("de-DE")}\n\nBetreff: ${editorIntent}\n\nSehr geehrte Damen und Herren,\n\nhiermit möchte ich ${editorIntent.toLowerCase()}.\n\nMit freundlichen Grüßen\n${user?.name}`); }
-    setEditorLoading(false);
-  };
-
   const createProject = () => {
     if (!npName) return;
-    const np = { id: Date.now(), name: npName, category: npCat, status: "offen", ampel: "gruen", behoerde: "Noch nicht zugeordnet", frist: null, letters: [] };
+    const np = { id: Date.now(), name: npName, category: npCat, status: "offen", ampel: "gruen", behoerde: "Noch nicht zugeordnet", frist: null, aktenzeichen: "", letters: [] };
     setProjects([np, ...projects]); setNpName(""); setShowNewProject(false); setActiveProject(np); setView("project");
   };
 
@@ -1148,93 +1189,157 @@ function DashboardPage({ user, setPage }) {
     setShowAnalyze(false); setAnalyzeText(""); setAnalyzeResult(null); setFileData(null);
   };
 
-  if (view === "overview") return <div style={{ padding: "32px 20px", maxWidth: 1200, margin: "0 auto" }}>
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 32 }}>
-      <div><h1 style={{ fontSize: 28, fontWeight: 800, color: brand.text, margin: 0 }}>Hallo, {user?.name} 👋</h1><p style={{ fontSize: 15, color: brand.textMuted, margin: "4px 0 0" }}>Dein Briefverkehr auf einen Blick</p></div>
-      <div style={{ display: "flex", gap: 10 }}>
-        <Btn size="sm" onClick={() => setShowAnalyze(true)}><Camera size={16} /> Brief scannen</Btn>
-        <Btn size="sm" variant="outline" onClick={() => setShowNewProject(true)}><Plus size={16} /> Neues Projekt</Btn>
-      </div>
+  const dashTabs = [["overview","Übersicht"],["settings","Einstellungen"]];
+
+  // ═══ SETTINGS ═══
+  if (view === "settings") return <div style={{ padding: "32px 20px", maxWidth: 900, margin: "0 auto" }}>
+    <h1 style={{ fontSize: 28, fontWeight: 800, color: brand.text, margin: "0 0 4px" }}>Einstellungen</h1>
+    <p style={{ fontSize: 15, color: brand.textMuted, margin: "0 0 24px" }}>Profil, Absender-Daten und Abo verwalten</p>
+    <div style={{ display: "flex", gap: 4, marginBottom: 32 }}>
+      {dashTabs.map(([id, l]) => <button key={id} onClick={() => setView(id)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: view === id ? brand.primary : "transparent", color: view === id ? "#fff" : brand.textMuted, fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>{l}</button>)}
     </div>
+    <Card style={{ marginBottom: 24 }}>
+      <h3 style={{ fontSize: 20, fontWeight: 700, color: brand.text, marginTop: 0, marginBottom: 4 }}>Persönliche Daten & Absender</h3>
+      <p style={{ fontSize: 14, color: brand.textMuted, marginBottom: 20 }}>Diese Daten werden als Absender in deinen Briefen verwendet (DIN 5008).</p>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+        <Input label="Vorname" value={profile.vorname} onChange={v => updateProfile("vorname", v)} placeholder="Max" icon={Users} />
+        <Input label="Nachname" value={profile.nachname} onChange={v => updateProfile("nachname", v)} placeholder="Mustermann" icon={Users} />
+      </div>
+      <Input label="Straße und Hausnummer" value={profile.strasse} onChange={v => updateProfile("strasse", v)} placeholder="Musterstraße 1" icon={MapPin} />
+      <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: "0 16px" }}>
+        <Input label="PLZ" value={profile.plz} onChange={v => updateProfile("plz", v)} placeholder="53474" />
+        <Input label="Ort" value={profile.ort} onChange={v => updateProfile("ort", v)} placeholder="Bad Neuenahr-Ahrweiler" icon={MapPin} />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+        <Input label="E-Mail" type="email" value={profile.email} onChange={v => updateProfile("email", v)} placeholder="name@beispiel.de" icon={Mail} />
+        <Input label="Telefon (optional)" value={profile.telefon} onChange={v => updateProfile("telefon", v)} placeholder="+49 123 456789" icon={Phone} />
+      </div>
+      <Btn onClick={() => { setUser?.({ ...user, name: fullName, email: profile.email }); alert("Profil gespeichert!"); }}>Profil speichern</Btn>
+      {!profile.strasse && <div style={{ marginTop: 16, padding: 12, borderRadius: 8, background: `${brand.warning}10`, border: `1px solid ${brand.warning}30`, display: "flex", alignItems: "center", gap: 10 }}><AlertTriangle size={16} style={{ color: brand.warning }} /><span style={{ fontSize: 13, color: brand.accentHover }}>Bitte hinterlege deine Adresse für den Briefversand.</span></div>}
+    </Card>
+    <Card style={{ marginBottom: 24 }}>
+      <h3 style={{ fontSize: 20, fontWeight: 700, color: brand.text, marginTop: 0, marginBottom: 20 }}>Abo-Verwaltung</h3>
+      <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap" }}>
+        {[{ id: "free", name: "Free", price: "0€", desc: "3 Analysen/Monat" },{ id: "plus", name: "Plus", price: "4,99€/Mo", desc: "Unbegrenzt + Archiv" },{ id: "pro", name: "Pro", price: "9,99€/Mo", desc: "Alles + Briefe + Vertragsprüfung" }].map(p => (
+          <div key={p.id} onClick={() => updateProfile("plan", p.id)} style={{ flex: "1 1 160px", padding: 16, borderRadius: 12, cursor: "pointer", border: profile.plan === p.id ? `2px solid ${brand.primary}` : `1.5px solid ${brand.borderLight}`, background: profile.plan === p.id ? brand.bgMuted : "#fff" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}><span style={{ fontSize: 16, fontWeight: 700 }}>{p.name}</span>{profile.plan === p.id && <CheckCircle size={18} style={{ color: brand.primary }} />}</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: brand.primary }}>{p.price}</div>
+            <div style={{ fontSize: 12, color: brand.textMuted, marginTop: 4 }}>{p.desc}</div>
+          </div>
+        ))}
+      </div>
+      {profile.plan !== "free" ? <Btn variant="outline" size="sm" onClick={() => { updateProfile("plan", "free"); alert("Abo zum Monatsende gekündigt."); }}>Abo kündigen</Btn> : <Btn size="sm" onClick={() => setPage("pricing")}>Upgrade</Btn>}
+    </Card>
+    <Card>
+      <h3 style={{ fontSize: 20, fontWeight: 700, color: brand.text, marginTop: 0, marginBottom: 16 }}>Datenschutz & Account</h3>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <Btn variant="outline" size="sm" style={{ justifyContent: "flex-start" }} onClick={() => alert("Datenexport wird per E-Mail zugestellt.")}><Download size={14} /> Meine Daten exportieren (Art. 15 DSGVO)</Btn>
+        <Btn variant="danger" size="sm" style={{ justifyContent: "flex-start" }} onClick={() => { if(confirm("Account wirklich löschen?")) alert("Account wird in 30 Tagen gelöscht."); }}><Trash2 size={14} /> Account löschen</Btn>
+      </div>
+    </Card>
+  </div>;
+
+  // ═══ OVERVIEW ═══
+  if (view === "overview") return <div style={{ padding: "32px 20px", maxWidth: 1200, margin: "0 auto" }}>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 24 }}>
+      <div><h1 style={{ fontSize: 28, fontWeight: 800, color: brand.text, margin: 0 }}>Hallo, {fullName} 👋</h1><p style={{ fontSize: 15, color: brand.textMuted, margin: "4px 0 0" }}>Dein Briefverkehr auf einen Blick</p></div>
+      <div style={{ display: "flex", gap: 10 }}><Btn size="sm" onClick={() => setShowAnalyze(true)}><Camera size={16} /> Brief scannen</Btn><Btn size="sm" variant="outline" onClick={() => setShowNewProject(true)}><Plus size={16} /> Neues Projekt</Btn></div>
+    </div>
+    <div style={{ display: "flex", gap: 4, marginBottom: 24 }}>
+      {dashTabs.map(([id, l]) => <button key={id} onClick={() => setView(id)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: view === id ? brand.primary : "transparent", color: view === id ? "#fff" : brand.textMuted, fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>{l}</button>)}
+    </div>
+    {!profile.strasse && <div style={{ padding: 14, borderRadius: 10, background: `${brand.info}08`, border: `1px solid ${brand.info}25`, marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}><Info size={18} style={{ color: brand.info }} /><span style={{ fontSize: 14, color: brand.info }}>Hinterlege deine Adresse in den Einstellungen für den Briefversand.</span></div>
+      <Btn size="sm" variant="outline" onClick={() => setView("settings")}>Einstellungen</Btn>
+    </div>}
     <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 32 }}>
       <StatCard icon={Folder} label="Offene Projekte" value={projects.filter(p => p.status !== "erledigt").length} color={brand.primary} />
       <StatCard icon={AlertTriangle} label="Dringend" value={projects.filter(p => p.ampel === "rot").length} color={brand.danger} />
       <StatCard icon={FileText} label="Briefe gesamt" value={projects.reduce((s, p) => s + p.letters.length, 0)} color={brand.info} />
       <StatCard icon={Clock} label="Nächste Frist" value={projects.filter(p => p.frist).sort((a, b) => new Date(a.frist) - new Date(b.frist))[0]?.frist?.split("-").reverse().join(".") || "—"} color={brand.warning} />
     </div>
-    {projects.some(p => p.ampel === "rot" && p.frist) && <div style={{ padding: 16, borderRadius: 12, background: `${brand.danger}08`, border: `1px solid ${brand.danger}30`, marginBottom: 24, display: "flex", alignItems: "center", gap: 12 }}><AlertTriangle size={20} style={{ color: brand.danger }} /><span style={{ fontSize: 14, color: brand.danger, fontWeight: 600 }}>Achtung: {projects.filter(p => p.ampel === "rot").length} Projekt(e) mit dringendem Handlungsbedarf!</span></div>}
+    {projects.some(p => p.ampel === "rot") && <div style={{ padding: 16, borderRadius: 12, background: `${brand.danger}08`, border: `1px solid ${brand.danger}30`, marginBottom: 24, display: "flex", alignItems: "center", gap: 12 }}><AlertTriangle size={20} style={{ color: brand.danger }} /><span style={{ fontSize: 14, color: brand.danger, fontWeight: 600 }}>Achtung: {projects.filter(p => p.ampel === "rot").length} dringende(s) Projekt(e)!</span></div>}
     <h2 style={{ fontSize: 20, fontWeight: 700, color: brand.text, marginBottom: 16 }}>Deine Projekte</h2>
     {projects.length === 0 ? (
       <Card style={{ padding: 48, textAlign: "center" }}>
         <div style={{ width: 72, height: 72, borderRadius: 20, background: `${brand.primary}10`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px" }}><FileText size={32} style={{ color: brand.primary }} /></div>
         <h3 style={{ fontSize: 22, fontWeight: 700, color: brand.text, margin: "0 0 8px" }}>Willkommen bei KlarBrief!</h3>
-        <p style={{ fontSize: 16, color: brand.textMuted, lineHeight: 1.7, margin: "0 0 24px", maxWidth: 400, marginLeft: "auto", marginRight: "auto" }}>Fotografiere oder lade deinen ersten Behördenbrief hoch — die KI erklärt dir sofort, was er bedeutet.</p>
-        <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-          <Btn onClick={() => setShowAnalyze(true)}><Camera size={18} /> Brief scannen</Btn>
-          <Btn variant="outline" onClick={() => setShowNewProject(true)}><Plus size={18} /> Neues Projekt</Btn>
-        </div>
+        <p style={{ fontSize: 16, color: brand.textMuted, lineHeight: 1.7, margin: "0 0 24px", maxWidth: 400, marginLeft: "auto", marginRight: "auto" }}>Fotografiere oder lade deinen ersten Behördenbrief hoch.</p>
+        <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}><Btn onClick={() => setShowAnalyze(true)}><Camera size={18} /> Brief scannen</Btn><Btn variant="outline" onClick={() => setShowNewProject(true)}><Plus size={18} /> Neues Projekt</Btn></div>
       </Card>
     ) : (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16 }}>
-      {projects.map(p => (
-        <Card key={p.id} hover onClick={() => { setActiveProject(p); setView("project"); }} style={{ cursor: "pointer" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}><AmpelBadge level={p.ampel} /><Badge color={brand.textMuted} bg={brand.bgMuted}>{p.category}</Badge></div>
-          <h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, margin: "0 0 6px" }}>{p.name}</h3>
-          <p style={{ fontSize: 13, color: brand.textMuted, margin: "0 0 12px" }}>{p.behoerde}</p>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: brand.textMuted }}><span>{p.letters.length} Brief(e)</span>{p.frist && <span style={{ color: brand.danger, fontWeight: 600 }}>Frist: {p.frist.split("-").reverse().join(".")}</span>}</div>
-        </Card>
-      ))}
-    </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16 }}>
+        {projects.map(p => (
+          <Card key={p.id} hover onClick={() => { setActiveProject(p); setView("project"); }} style={{ cursor: "pointer" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}><AmpelBadge level={p.ampel} /><Badge color={brand.textMuted} bg={brand.bgMuted}>{p.category}</Badge></div>
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, margin: "0 0 6px" }}>{p.name}</h3>
+            <p style={{ fontSize: 13, color: brand.textMuted, margin: "0 0 12px" }}>{p.behoerde}{p.aktenzeichen ? ` · Az: ${p.aktenzeichen}` : ""}</p>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: brand.textMuted }}><span>{p.letters.length} Brief(e)</span>{p.frist && <span style={{ color: brand.danger, fontWeight: 600 }}>Frist: {p.frist.split("-").reverse().join(".")}</span>}</div>
+          </Card>
+        ))}
+      </div>
     )}
     <Modal open={showNewProject} onClose={() => setShowNewProject(false)} title="Neues Projekt">
       <Input label="Projektname" value={npName} onChange={setNpName} placeholder="z.B. Steuerbescheid 2025" icon={Folder} />
-      <div style={{ marginBottom: 16 }}><label style={{ display: "block", marginBottom: 6, fontSize: 14, fontWeight: 600, color: brand.text }}>Kategorie</label><div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>{["Steuern","Miete","Soziales","Bußgeld","Versicherung","Arbeit","Sonstiges"].map(c => <button key={c} onClick={() => setNpCat(c)} style={{ padding: "8px 16px", borderRadius: 8, border: `1.5px solid ${npCat === c ? brand.primary : brand.borderLight}`, background: npCat === c ? brand.bgMuted : "#fff", color: npCat === c ? brand.primary : brand.textMuted, fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{c}</button>)}</div></div>
+      <div style={{ marginBottom: 16 }}><label style={{ display: "block", marginBottom: 6, fontSize: 14, fontWeight: 600 }}>Kategorie</label><div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>{["Steuern","Miete","Soziales","Bußgeld","Versicherung","Arbeit","Sonstiges"].map(c => <button key={c} onClick={() => setNpCat(c)} style={{ padding: "8px 16px", borderRadius: 8, border: `1.5px solid ${npCat === c ? brand.primary : brand.borderLight}`, background: npCat === c ? brand.bgMuted : "#fff", color: npCat === c ? brand.primary : brand.textMuted, fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{c}</button>)}</div></div>
       <Btn onClick={createProject} style={{ width: "100%" }}>Projekt erstellen</Btn>
     </Modal>
     <Modal open={showAnalyze} onClose={() => { setShowAnalyze(false); setAnalyzeText(""); setAnalyzeResult(null); setFileData(null); }} title="Brief analysieren" wide>
-      <FileUploader onFileContent={(data) => setFileData(data)} onTextContent={(text) => setAnalyzeText(text)} />
+      <FileUploader onFileContent={d => setFileData(d)} onTextContent={t => setAnalyzeText(t)} />
       <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "8px 0 16px" }}><div style={{ flex: 1, height: 1, background: brand.borderLight }} /><span style={{ fontSize: 13, color: brand.textMuted }}>oder Text eingeben</span><div style={{ flex: 1, height: 1, background: brand.borderLight }} /></div>
-      <Input label="" textarea value={analyzeText} onChange={setAnalyzeText} placeholder="Text des Behördenbriefs..." icon={FileText} />
+      <Input textarea value={analyzeText} onChange={setAnalyzeText} placeholder="Text des Behördenbriefs..." icon={FileText} />
       <Btn onClick={handleAnalyze} style={{ width: "100%" }}>{analyzing ? <><RefreshCw size={16} style={{ animation: "spin 1s linear infinite" }} /> Analysiere...</> : <><Zap size={16} /> Analysieren</>}</Btn>
       {analyzeResult && <div style={{ marginTop: 20 }}>
-        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}><AmpelBadge level={analyzeResult.ampel} /><Badge>{analyzeResult.kategorie}</Badge>{analyzeResult.frist && <Badge color={brand.danger} bg={`${brand.danger}10`}>Frist: {analyzeResult.frist}</Badge>}</div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}><AmpelBadge level={analyzeResult.ampel} /><Badge>{analyzeResult.kategorie}</Badge>{analyzeResult.frist && <Badge color={brand.danger} bg={`${brand.danger}10`}>Frist: {analyzeResult.frist}</Badge>}</div>
         <div style={{ padding: 16, background: brand.bgMuted, borderRadius: 10, marginBottom: 12 }}><p style={{ margin: 0, fontSize: 15, lineHeight: 1.7 }}>{analyzeResult.klartext}</p></div>
-        {analyzeResult.todos?.map((t, i) => <div key={i} style={{ display: "flex", gap: 8, padding: "6px 0", fontSize: 14, color: brand.text }}><CheckCircle size={16} style={{ color: brand.success, flexShrink: 0 }} />{t}</div>)}
-        {activeProject ? <Btn onClick={addLetterToProject} variant="accent" style={{ width: "100%", marginTop: 16 }}>Zu "{activeProject.name}" hinzufügen</Btn> : <p style={{ fontSize: 13, color: brand.textMuted, marginTop: 12 }}>Öffne ein Projekt um den Brief zuzuordnen.</p>}
+        {analyzeResult.todos?.map((t, i) => <div key={i} style={{ display: "flex", gap: 8, padding: "6px 0", fontSize: 14 }}><CheckCircle size={16} style={{ color: brand.success, flexShrink: 0 }} />{t}</div>)}
       </div>}
     </Modal>
   </div>;
 
+  // ═══ PROJECT DETAIL ═══
   if (view === "project" && activeProject) return <div style={{ padding: "32px 20px", maxWidth: 1000, margin: "0 auto" }}>
     <button onClick={() => { setView("overview"); setActiveProject(null); }} style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer", color: brand.primary, fontWeight: 600, fontSize: 14, padding: 0, marginBottom: 24, fontFamily: "inherit" }}><ArrowLeft size={16} /> Zurück</button>
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 32 }}>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 20 }}>
       <div><div style={{ display: "flex", gap: 10, marginBottom: 8 }}><AmpelBadge level={activeProject.ampel} /><Badge>{activeProject.category}</Badge></div><h1 style={{ fontSize: 28, fontWeight: 800, color: brand.text, margin: "0 0 4px" }}>{activeProject.name}</h1><p style={{ fontSize: 14, color: brand.textMuted, margin: 0 }}>{activeProject.behoerde}</p></div>
-      <div style={{ display: "flex", gap: 10 }}><Btn size="sm" onClick={() => setShowAnalyze(true)}><Camera size={14} /> Brief hinzufügen</Btn><Btn size="sm" variant="accent" onClick={() => setShowEditor(true)}><Edit3 size={14} /> Antwort schreiben</Btn></div>
+      <div style={{ display: "flex", gap: 10 }}><Btn size="sm" onClick={() => setShowAnalyze(true)}><Camera size={14} /> Brief hinzufügen</Btn><Btn size="sm" variant="accent" onClick={() => { setEditorAktenzeichen(activeProject.aktenzeichen || ""); setShowEditor(true); }}><Edit3 size={14} /> Antwort schreiben</Btn></div>
     </div>
+    <Card style={{ padding: 16, marginBottom: 16, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+      <span style={{ fontSize: 14, fontWeight: 600 }}>Aktenzeichen:</span>
+      <input value={activeProject.aktenzeichen || ""} onChange={e => { const v = e.target.value; setActiveProject(p => ({...p, aktenzeichen: v})); setProjects(ps => ps.map(p => p.id === activeProject.id ? {...p, aktenzeichen: v} : p)); }} placeholder="z.B. 205/12345/2026" style={{ flex: 1, minWidth: 200, padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${brand.borderLight}`, fontSize: 14, fontFamily: "inherit", outline: "none" }} />
+    </Card>
     {activeProject.frist && <div style={{ padding: 16, borderRadius: 12, background: `${brand.danger}08`, border: `1px solid ${brand.danger}20`, marginBottom: 24, display: "flex", alignItems: "center", gap: 12 }}><Clock size={18} style={{ color: brand.danger }} /><span style={{ fontSize: 14, fontWeight: 600, color: brand.danger }}>Frist: {activeProject.frist.split("-").reverse().join(".")} — {Math.max(0, Math.ceil((new Date(activeProject.frist) - new Date()) / 86400000))} Tage</span></div>}
     <h2 style={{ fontSize: 20, fontWeight: 700, color: brand.text, marginBottom: 20 }}>Schriftverkehr</h2>
     <div style={{ position: "relative", paddingLeft: 32 }}>
       <div style={{ position: "absolute", left: 11, top: 0, bottom: 0, width: 2, background: brand.borderLight }} />
-      {activeProject.letters.map((l) => (
+      {activeProject.letters.map(l => (
         <div key={l.id} style={{ position: "relative", marginBottom: 20 }}>
           <div style={{ position: "absolute", left: -32, top: 4, width: 24, height: 24, borderRadius: "50%", background: l.direction === "eingehend" ? brand.info : brand.success, display: "flex", alignItems: "center", justifyContent: "center" }}>{l.direction === "eingehend" ? <Download size={12} color="#fff" /> : <Send size={12} color="#fff" />}</div>
-          <Card>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}><Badge color={l.direction === "eingehend" ? brand.info : brand.success} bg={l.direction === "eingehend" ? `${brand.info}15` : `${brand.success}15`}>{l.direction === "eingehend" ? "Eingehend" : "Ausgehend"}</Badge><span style={{ fontSize: 13, color: brand.textMuted }}>{l.date}</span></div>
-            <h4 style={{ fontSize: 16, fontWeight: 700, color: brand.text, margin: "0 0 6px" }}>{l.type}</h4>
-            <p style={{ fontSize: 14, color: brand.textMuted, lineHeight: 1.6, margin: 0 }}>{l.summary}</p>
-          </Card>
+          <Card><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}><Badge color={l.direction === "eingehend" ? brand.info : brand.success} bg={l.direction === "eingehend" ? `${brand.info}15` : `${brand.success}15`}>{l.direction === "eingehend" ? "Eingehend" : "Ausgehend"}</Badge><span style={{ fontSize: 13, color: brand.textMuted }}>{l.date}</span></div><h4 style={{ fontSize: 16, fontWeight: 700, color: brand.text, margin: "0 0 6px" }}>{l.type}</h4><p style={{ fontSize: 14, color: brand.textMuted, lineHeight: 1.6, margin: 0 }}>{l.summary}</p></Card>
         </div>
       ))}
     </div>
-    {activeProject.letters.length === 0 && <Card style={{ textAlign: "center", padding: 40 }}><Camera size={40} style={{ color: brand.borderLight, marginBottom: 12 }} /><p style={{ color: brand.textMuted, margin: 0 }}>Noch keine Briefe. Fotografiere oder lade den ersten Brief hoch!</p></Card>}
-    <Modal open={showEditor} onClose={() => { setShowEditor(false); setEditorResult(""); setEditorIntent(""); }} title="Antwortbrief erstellen" wide>
-      <Input label="Was möchtest du?" textarea value={editorIntent} onChange={setEditorIntent} placeholder="z.B. Ich will Widerspruch einlegen..." />
-      <div style={{ marginBottom: 16 }}><label style={{ display: "block", marginBottom: 6, fontSize: 14, fontWeight: 600 }}>Ton</label><div style={{ display: "flex", gap: 8 }}>{["sachlich","fordernd","freundlich"].map(t => <button key={t} onClick={() => setEditorTone(t)} style={{ padding: "8px 16px", borderRadius: 8, border: `1.5px solid ${editorTone === t ? brand.primary : brand.borderLight}`, background: editorTone === t ? brand.bgMuted : "#fff", color: editorTone === t ? brand.primary : brand.textMuted, fontWeight: 600, fontSize: 13, cursor: "pointer", textTransform: "capitalize", fontFamily: "inherit" }}>{t}</button>)}</div></div>
-      <Btn onClick={handleGenerateLetter} style={{ width: "100%" }}>{editorLoading ? <><RefreshCw size={16} style={{ animation: "spin 1s linear infinite" }} /> Generiere...</> : <><Edit3 size={16} /> Brief generieren</>}</Btn>
-      {editorResult && <div style={{ marginTop: 20 }}><div style={{ padding: 24, background: "#fff", border: `1px solid ${brand.borderLight}`, borderRadius: 8, fontFamily: "Georgia, serif", fontSize: 14, lineHeight: 1.8, whiteSpace: "pre-wrap" }}>{editorResult}</div><div style={{ display: "flex", gap: 10, marginTop: 16 }}><Btn variant="accent" onClick={() => window.print()}><Printer size={14} /> Drucken</Btn><Btn variant="outline" onClick={() => { const b = new Blob([editorResult], { type: "text/plain" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = "Antwortbrief.txt"; a.click(); }}><Download size={14} /> Download</Btn></div></div>}
+    {activeProject.letters.length === 0 && <Card style={{ textAlign: "center", padding: 40 }}><Camera size={40} style={{ color: brand.borderLight, marginBottom: 12 }} /><p style={{ color: brand.textMuted }}>Noch keine Briefe. Lade den ersten Brief hoch!</p></Card>}
+    <Modal open={showEditor} onClose={() => { setShowEditor(false); setEditorResult(""); setEditorIntent(""); }} title="Professionellen Antwortbrief erstellen (DIN 5008)" wide>
+      {!profile.strasse && <div style={{ padding: 12, borderRadius: 8, background: `${brand.warning}08`, border: `1px solid ${brand.warning}25`, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><AlertTriangle size={16} style={{ color: brand.warning }} /><span style={{ fontSize: 13, color: brand.accentHover }}>Absender fehlt! <span style={{ textDecoration: "underline", cursor: "pointer" }} onClick={() => { setShowEditor(false); setView("settings"); }}>Einstellungen öffnen</span></span></div>}
+      <Input label="Aktenzeichen / Geschäftszeichen" value={editorAktenzeichen} onChange={setEditorAktenzeichen} placeholder="z.B. 205/12345/2026" icon={FileText} />
+      <Input label="Dein Anliegen (so detailliert wie möglich)" textarea value={editorIntent} onChange={setEditorIntent} placeholder="z.B. Einspruch gegen den Steuerbescheid — Werbungskosten in Höhe von 2.340€ wurden nicht berücksichtigt. Belege liegen bei." />
+      <div style={{ marginBottom: 16 }}><label style={{ display: "block", marginBottom: 6, fontSize: 14, fontWeight: 600 }}>Ton:</label><div style={{ display: "flex", gap: 8 }}>{[["sachlich","Sachlich & formal"],["fordernd","Bestimmt & fordernd"],["freundlich","Freundlich & kooperativ"]].map(([t,l]) => <button key={t} onClick={() => setEditorTone(t)} style={{ padding: "8px 14px", borderRadius: 8, border: `1.5px solid ${editorTone === t ? brand.primary : brand.borderLight}`, background: editorTone === t ? brand.bgMuted : "#fff", color: editorTone === t ? brand.primary : brand.textMuted, fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{l}</button>)}</div></div>
+      <div style={{ padding: 12, borderRadius: 8, background: brand.bgMuted, marginBottom: 16, fontSize: 13, color: brand.textMuted }}>
+        <strong style={{ color: brand.text }}>Absender:</strong> {fullName}{fullAddress ? `, ${profile.strasse}, ${profile.plz} ${profile.ort}` : " (nicht hinterlegt)"} · <strong style={{ color: brand.text }}>An:</strong> {activeProject?.behoerde || "—"} · <strong style={{ color: brand.text }}>Format:</strong> DIN 5008 mit Rechtsverweisen
+      </div>
+      <Btn onClick={handleGenerateLetter} style={{ width: "100%" }}>{editorLoading ? <><RefreshCw size={16} style={{ animation: "spin 1s linear infinite" }} /> Wird erstellt...</> : <><Scale size={16} /> Brief generieren (DIN 5008)</>}</Btn>
+      {editorResult && <div style={{ marginTop: 20 }}>
+        <div style={{ padding: 28, background: "#fff", border: `1px solid ${brand.borderLight}`, borderRadius: 4, fontFamily: "'Courier New', monospace", fontSize: 13, lineHeight: 1.9, whiteSpace: "pre-wrap", color: brand.text, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>{editorResult}</div>
+        <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
+          <Btn variant="accent" onClick={() => window.print()}><Printer size={14} /> Drucken</Btn>
+          <Btn variant="outline" onClick={() => { const b = new Blob([editorResult], { type: "text/plain;charset=utf-8" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = `Brief_${activeProject?.name?.replace(/\s/g,"_") || "Antwort"}_${new Date().toISOString().split("T")[0]}.txt`; a.click(); }}><Download size={14} /> Speichern</Btn>
+          <Btn variant="ghost" onClick={() => { navigator.clipboard?.writeText(editorResult); alert("Kopiert!"); }}><FileText size={14} /> Kopieren</Btn>
+        </div>
+      </div>}
     </Modal>
     <Modal open={showAnalyze} onClose={() => { setShowAnalyze(false); setAnalyzeText(""); setAnalyzeResult(null); setFileData(null); }} title="Brief hinzufügen" wide>
-      <FileUploader onFileContent={(data) => setFileData(data)} onTextContent={(text) => setAnalyzeText(text)} />
+      <FileUploader onFileContent={d => setFileData(d)} onTextContent={t => setAnalyzeText(t)} />
       <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "8px 0 16px" }}><div style={{ flex: 1, height: 1, background: brand.borderLight }} /><span style={{ fontSize: 13, color: brand.textMuted }}>oder Text</span><div style={{ flex: 1, height: 1, background: brand.borderLight }} /></div>
       <Input textarea value={analyzeText} onChange={setAnalyzeText} placeholder="Brief-Text..." icon={FileText} />
       <Btn onClick={handleAnalyze} style={{ width: "100%" }}>{analyzing ? <><RefreshCw size={16} style={{ animation: "spin 1s linear infinite" }} /> Analysiere...</> : <><Zap size={16} /> Analysieren</>}</Btn>
@@ -1243,9 +1348,6 @@ function DashboardPage({ user, setPage }) {
   </div>;
 }
 
-// ═══════════════════════════════════════════
-// ADMIN
-// ═══════════════════════════════════════════
 function AdminPage() {
   const [tab, setTab] = useState("overview");
   const [searchTerm, setSearchTerm] = useState("");
@@ -1359,7 +1461,7 @@ export default function App() {
       case "about": return <AboutPage />;
       case "login": return <AuthPage mode="login" setPage={setPage} onLogin={setUser} />;
       case "register": return <AuthPage mode="register" setPage={setPage} onLogin={setUser} />;
-      case "dashboard": return isLoggedIn ? <DashboardPage user={user} setPage={setPage} /> : <AuthPage mode="login" setPage={setPage} onLogin={setUser} />;
+      case "dashboard": return isLoggedIn ? <DashboardPage user={user} setUser={setUser} setPage={setPage} /> : <AuthPage mode="login" setPage={setPage} onLogin={setUser} />;
       case "admin": return isLoggedIn && isAdmin ? <AdminPage /> : <AuthPage mode="login" setPage={setPage} onLogin={setUser} />;
       case "impressum": case "datenschutz": case "agb": case "widerruf": return <LegalPage page={page} />;
       default: return <HomePage setPage={setPage} />;

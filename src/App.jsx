@@ -86,7 +86,7 @@ function FileUploader({ onFileContent, onTextContent }) {
                 { type: "text", text: "Extrahiere den vollständigen Text aus diesem Behördenbrief/Dokument. Gib NUR den extrahierten Text zurück, keine Erklärungen." }
               ];
 
-          const resp = await fetch("https://api.anthropic.com/v1/messages", {
+          const resp = await fetch("/api/anthropic", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -364,7 +364,7 @@ Keine Markdown-Formatierung, kein Präambel, nur das JSON-Objekt.`;
   }
 
   try {
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    const resp = await fetch("/api/anthropic", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: 1000, system: systemPrompt, messages })
     });
@@ -1155,7 +1155,7 @@ ${projectCtx}
 NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. Aktenzeichen der Gegenseite MUSS referenziert werden.`;
 
     try {
-      const resp = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json" },
+      const resp = await fetch("/api/anthropic", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: 1500, system: sysPrompt,
           messages: [{ role: "user", content: `Erstelle einen professionellen Brief. Anliegen: ${editorIntent}` }] })
       });

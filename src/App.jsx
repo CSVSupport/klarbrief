@@ -1,0 +1,1375 @@
+import { useState, useEffect, useRef, useCallback } from "react";
+import { FileText, Shield, Clock, Search, Upload, ChevronRight, Check, X, Menu, Bell, Settings, LogOut, Users, BarChart3, TrendingUp, Eye, Edit3, Trash2, Plus, ArrowLeft, Home, Folder, AlertTriangle, CheckCircle, AlertCircle, Info, Send, Printer, Download, Star, Zap, Lock, Globe, MessageSquare, Phone, Mail, MapPin, Calendar, ChevronDown, ChevronUp, Filter, RefreshCw, Award, Heart, ExternalLink, Cookie, BookOpen, Scale, CreditCard, UserPlus, PieChart, Activity, Layers, Target, ArrowRight, Sparkles, Bot, Camera, Image, FileUp, File } from "lucide-react";
+
+// ============================================
+// KLARBRIEF — Complete SaaS Platform
+// Behördenbriefe einfach erklärt
+// ============================================
+
+const ANTHROPIC_MODEL = "claude-sonnet-4-20250514";
+
+const brand = {
+  primary: "#065f46", primaryLight: "#059669", primaryDark: "#064e3b",
+  accent: "#f59e0b", accentHover: "#d97706", accentLight: "#fbbf24",
+  bg: "#fefdf8", bgWarm: "#fef9ee", bgDark: "#022c22",
+  bgCard: "#ffffff", bgMuted: "#f0fdf4",
+  text: "#1c1917", textMuted: "#6b7280", textLight: "#f0fdf4",
+  border: "#d1d5db", borderLight: "#e5e7eb",
+  success: "#10b981", warning: "#f59e0b", danger: "#ef4444", info: "#3b82f6",
+};
+
+const ampel = {
+  rot: { bg: "#fef2f2", border: "#fca5a5", text: "#991b1b", icon: "#ef4444", label: "Dringend" },
+  gelb: { bg: "#fffbeb", border: "#fcd34d", text: "#92400e", icon: "#f59e0b", label: "Wichtig" },
+  gruen: { bg: "#f0fdf4", border: "#86efac", text: "#166534", icon: "#10b981", label: "Info" },
+};
+
+const demoProjects = [
+  { id: 1, name: "Steuerbescheid 2025", category: "Steuern", status: "offen", ampel: "rot", behoerde: "Finanzamt Bonn-Innenstadt", frist: "2026-04-15", letters: [
+    { id: 1, date: "10.03.2026", direction: "eingehend", type: "Steuerbescheid", summary: "Nachzahlung von 847,50€ für das Steuerjahr 2025. Frist: 15.04.2026.", analyzed: true },
+    { id: 2, date: "18.03.2026", direction: "ausgehend", type: "Einspruch", summary: "Einspruch gegen die Berechnung der Werbungskosten eingelegt.", analyzed: false },
+  ]},
+  { id: 2, name: "Nebenkostenabrechnung 2025", category: "Miete", status: "wartet", ampel: "gelb", behoerde: "Hausverwaltung Schmidt GmbH", frist: "2026-05-30", letters: [
+    { id: 3, date: "28.02.2026", direction: "eingehend", type: "Abrechnung", summary: "Nachzahlung von 312,80€ für Heizkosten und Müllabfuhr. Prüfungsfrist bis 30.05.2026.", analyzed: true },
+  ]},
+  { id: 3, name: "Kindergeld-Bescheid", category: "Soziales", status: "erledigt", ampel: "gruen", behoerde: "Familienkasse Bonn", frist: null, letters: [
+    { id: 4, date: "15.01.2026", direction: "eingehend", type: "Bewilligungsbescheid", summary: "Kindergeld in Höhe von 250€ monatlich bewilligt ab 01.01.2026.", analyzed: true },
+  ]},
+];
+
+const demoUsers = [
+  { id: 1, name: "Max Mustermann", email: "max@beispiel.de", plan: "plus", projects: 5, analyses: 23, lastLogin: "2026-04-02", registered: "2025-11-15" },
+  { id: 2, name: "Anna Weber", email: "anna.w@mail.de", plan: "pro", projects: 12, analyses: 67, lastLogin: "2026-04-03", registered: "2025-10-01" },
+  { id: 3, name: "Tom Schulz", email: "tom@web.de", plan: "free", projects: 2, analyses: 3, lastLogin: "2026-03-28", registered: "2026-03-20" },
+  { id: 4, name: "Lisa Braun", email: "lisa.b@outlook.de", plan: "plus", projects: 8, analyses: 41, lastLogin: "2026-04-01", registered: "2025-12-05" },
+  { id: 5, name: "Kerem Yildiz", email: "kerem@gmail.com", plan: "free", projects: 1, analyses: 2, lastLogin: "2026-03-30", registered: "2026-03-25" },
+];
+
+// ── File Upload / Camera Component ──
+function FileUploader({ onFileContent, onTextContent }) {
+  const [dragOver, setDragOver] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [fileName, setFileName] = useState("");
+  const [processing, setProcessing] = useState(false);
+  const fileRef = useRef(null);
+  const cameraRef = useRef(null);
+
+  const processFile = async (file) => {
+    if (!file) return;
+    setFileName(file.name);
+    setProcessing(true);
+
+    const isImage = file.type.startsWith("image/");
+    const isPdf = file.type === "application/pdf";
+
+    if (isImage || isPdf) {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const base64 = e.target.result.split(",")[1];
+        const mediaType = file.type;
+
+        if (isImage) {
+          setPreview(e.target.result);
+        } else {
+          setPreview(null);
+        }
+
+        // Call Claude Vision API
+        try {
+          const content = isImage
+            ? [
+                { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } },
+                { type: "text", text: "Extrahiere den vollständigen Text aus diesem Behördenbrief. Gib NUR den extrahierten Text zurück, keine Erklärungen." }
+              ]
+            : [
+                { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
+                { type: "text", text: "Extrahiere den vollständigen Text aus diesem Behördenbrief/Dokument. Gib NUR den extrahierten Text zurück, keine Erklärungen." }
+              ];
+
+          const resp = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: ANTHROPIC_MODEL,
+              max_tokens: 2000,
+              messages: [{ role: "user", content }],
+            })
+          });
+          const data = await resp.json();
+          const extractedText = data.content?.[0]?.text || "";
+          onFileContent?.({ base64, mediaType, extractedText, isImage, isPdf });
+          onTextContent?.(extractedText);
+        } catch (err) {
+          console.error("Vision API error:", err);
+          onTextContent?.("[Fehler bei der Texterkennung — bitte Text manuell eingeben]");
+        }
+        setProcessing(false);
+      };
+      reader.readAsDataURL(file);
+    } else {
+      // Plain text file
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        onTextContent?.(e.target.result);
+        setProcessing(false);
+      };
+      reader.readAsText(file);
+    }
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) processFile(file);
+  };
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files[0];
+    if (file) processFile(file);
+  };
+
+  const handleCameraCapture = (e) => {
+    const file = e.target.files[0];
+    if (file) processFile(file);
+  };
+
+  const reset = () => {
+    setPreview(null);
+    setFileName("");
+    setProcessing(false);
+    onTextContent?.("");
+    if (fileRef.current) fileRef.current.value = "";
+    if (cameraRef.current) cameraRef.current.value = "";
+  };
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      {/* Hidden inputs */}
+      <input ref={fileRef} type="file" accept="image/*,.pdf,.txt" onChange={handleFileSelect} style={{ display: "none" }} />
+      <input ref={cameraRef} type="file" accept="image/*" capture="environment" onChange={handleCameraCapture} style={{ display: "none" }} />
+
+      {!fileName ? (
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={handleDrop}
+          style={{
+            border: `2px dashed ${dragOver ? brand.primary : brand.borderLight}`,
+            borderRadius: 16,
+            padding: "32px 20px",
+            textAlign: "center",
+            background: dragOver ? `${brand.primary}08` : brand.bgMuted,
+            transition: "all 0.2s",
+            cursor: "pointer",
+          }}
+          onClick={() => fileRef.current?.click()}
+        >
+          <div style={{ width: 64, height: 64, borderRadius: 16, background: `${brand.primary}12`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+            <Upload size={28} style={{ color: brand.primary }} />
+          </div>
+          <p style={{ fontSize: 16, fontWeight: 600, color: brand.text, margin: "0 0 6px" }}>
+            Brief hochladen
+          </p>
+          <p style={{ fontSize: 14, color: brand.textMuted, margin: "0 0 20px" }}>
+            Foto, PDF oder Textdatei hierher ziehen — oder klicken
+          </p>
+          <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+            <button
+              onClick={(e) => { e.stopPropagation(); cameraRef.current?.click(); }}
+              style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 20px", borderRadius: 10, border: `1.5px solid ${brand.primary}`, background: "#fff", color: brand.primary, fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}
+            >
+              <Camera size={18} /> Foto aufnehmen
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}
+              style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 20px", borderRadius: 10, border: `1.5px solid ${brand.borderLight}`, background: "#fff", color: brand.text, fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}
+            >
+              <FileUp size={18} /> Datei wählen
+            </button>
+          </div>
+          <div style={{ marginTop: 16, display: "flex", gap: 16, justifyContent: "center", fontSize: 12, color: brand.textMuted }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Image size={14} /> JPG, PNG</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 4 }}><File size={14} /> PDF</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 4 }}><FileText size={14} /> TXT</span>
+          </div>
+        </div>
+      ) : (
+        <div style={{ border: `1.5px solid ${brand.borderLight}`, borderRadius: 16, padding: 20, background: "#fff" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: preview ? 12 : 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {processing ? (
+                <div style={{ width: 40, height: 40, borderRadius: 10, background: `${brand.primary}12`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <RefreshCw size={20} style={{ color: brand.primary, animation: "spin 1s linear infinite" }} />
+                </div>
+              ) : (
+                <div style={{ width: 40, height: 40, borderRadius: 10, background: `${brand.success}12`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <CheckCircle size={20} style={{ color: brand.success }} />
+                </div>
+              )}
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: brand.text }}>{fileName}</div>
+                <div style={{ fontSize: 12, color: processing ? brand.primary : brand.success, fontWeight: 600 }}>
+                  {processing ? "Text wird erkannt..." : "Text erfolgreich erkannt ✓"}
+                </div>
+              </div>
+            </div>
+            <button onClick={reset} style={{ background: "none", border: "none", cursor: "pointer", padding: 6 }}>
+              <X size={18} color={brand.textMuted} />
+            </button>
+          </div>
+          {preview && (
+            <div style={{ marginTop: 8, borderRadius: 10, overflow: "hidden", border: `1px solid ${brand.borderLight}`, maxHeight: 200 }}>
+              <img src={preview} alt="Vorschau" style={{ width: "100%", height: "auto", display: "block", objectFit: "contain", maxHeight: 200 }} />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Cookie Banner ──
+function CookieBanner({ onAccept }) {
+  const [show, setShow] = useState(true);
+  const [showSettings, setShowSettings] = useState(false);
+  const [functional, setFunctional] = useState(false);
+  const [analytics, setAnalytics] = useState(false);
+  const [marketing, setMarketing] = useState(false);
+
+  if (!show) return null;
+
+  return (
+    <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 9999, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)" }}>
+      <div style={{ maxWidth: 800, margin: "0 auto", padding: "24px 20px", background: "#fff", borderTopLeftRadius: 20, borderTopRightRadius: 20, boxShadow: "0 -8px 40px rgba(0,0,0,0.15)" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 16 }}>
+          <Cookie size={24} style={{ color: brand.accent, flexShrink: 0, marginTop: 2 }} />
+          <div>
+            <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: brand.text }}>Datenschutz-Einstellungen</h3>
+            <p style={{ margin: "8px 0 0", fontSize: 14, color: brand.textMuted, lineHeight: 1.6 }}>
+              Wir verwenden Cookies für den Betrieb der Seite. Technisch notwendige Cookies können nicht deaktiviert werden. Mehr in unserer Datenschutzerklärung.
+            </p>
+          </div>
+        </div>
+        {showSettings && (
+          <div style={{ margin: "16px 0", padding: 16, background: brand.bgMuted, borderRadius: 12, display: "flex", flexDirection: "column", gap: 12 }}>
+            {[
+              { label: "Notwendig", desc: "Session, Sicherheit, Cookie-Consent", checked: true, disabled: true },
+              { label: "Funktional", desc: "Spracheinstellungen, UI-Präferenzen", checked: functional, onChange: () => setFunctional(!functional) },
+              { label: "Analyse", desc: "Anonymisierte Nutzungsstatistiken", checked: analytics, onChange: () => setAnalytics(!analytics) },
+              { label: "Marketing", desc: "Personalisierte Inhalte", checked: marketing, onChange: () => setMarketing(!marketing) },
+            ].map((c, i) => (
+              <label key={i} style={{ display: "flex", alignItems: "center", gap: 12, cursor: c.disabled ? "default" : "pointer" }}>
+                <div style={{ width: 44, height: 24, borderRadius: 12, background: c.checked ? brand.primary : "#d1d5db", position: "relative", transition: "background 0.2s", opacity: c.disabled ? 0.7 : 1 }}
+                  onClick={c.disabled ? undefined : c.onChange}>
+                  <div style={{ width: 20, height: 20, borderRadius: 10, background: "#fff", position: "absolute", top: 2, left: c.checked ? 22 : 2, transition: "left 0.2s cubic-bezier(0.34,1.56,0.64,1)", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: brand.text }}>{c.label}</div>
+                  <div style={{ fontSize: 12, color: brand.textMuted }}>{c.desc}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button onClick={() => { setShow(false); onAccept?.(); }} style={{ flex: 1, minWidth: 140, padding: "12px 20px", borderRadius: 10, border: `2px solid ${brand.border}`, background: "#fff", color: brand.text, fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Nur notwendige</button>
+          <button onClick={() => setShowSettings(!showSettings)} style={{ flex: 1, minWidth: 140, padding: "12px 20px", borderRadius: 10, border: `2px solid ${brand.border}`, background: "#fff", color: brand.text, fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>{showSettings ? "Speichern" : "Einstellungen"}</button>
+          <button onClick={() => { setShow(false); onAccept?.(); }} style={{ flex: 1, minWidth: 140, padding: "12px 20px", borderRadius: 10, border: "none", background: brand.primary, color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Alle akzeptieren</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Shared Components ──
+function Badge({ children, color = brand.primary, bg = brand.bgMuted }) {
+  return <span style={{ display: "inline-block", padding: "4px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600, background: bg, color }}>{children}</span>;
+}
+function AmpelBadge({ level }) {
+  const a = ampel[level]; if (!a) return null;
+  return <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, background: a.bg, color: a.text, border: `1px solid ${a.border}` }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: a.icon }} />{a.label}</span>;
+}
+function Btn({ children, variant = "primary", size = "md", onClick, style: sx, ...rest }) {
+  const base = { border: "none", cursor: "pointer", fontWeight: 600, borderRadius: 10, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, transition: "all 0.2s cubic-bezier(0.25,0,0.25,1)", fontFamily: "inherit" };
+  const sizes = { sm: { padding: "8px 16px", fontSize: 13 }, md: { padding: "12px 24px", fontSize: 15 }, lg: { padding: "16px 32px", fontSize: 17 } };
+  const variants = {
+    primary: { background: brand.primary, color: "#fff" }, accent: { background: brand.accent, color: brand.text },
+    outline: { background: "transparent", color: brand.primary, border: `2px solid ${brand.primary}` },
+    ghost: { background: "transparent", color: brand.textMuted }, danger: { background: brand.danger, color: "#fff" },
+    white: { background: "#fff", color: brand.primary, boxShadow: "0 2px 8px rgba(0,0,0,0.1)" },
+  };
+  return <button onClick={onClick} style={{ ...base, ...sizes[size], ...variants[variant], ...sx }} {...rest}>{children}</button>;
+}
+function Card({ children, style: sx, hover, onClick }) {
+  const [h, setH] = useState(false);
+  return <div onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+    style={{ background: brand.bgCard, borderRadius: 16, border: `1px solid ${brand.borderLight}`, padding: 24, transition: "all 0.25s cubic-bezier(0.25,0,0.25,1)", transform: hover && h ? "translateY(-4px)" : "none", boxShadow: hover && h ? "0 12px 32px rgba(0,0,0,0.08)" : "0 1px 3px rgba(0,0,0,0.04)", cursor: onClick ? "pointer" : "default", ...sx }}>{children}</div>;
+}
+function Input({ label, type = "text", value, onChange, placeholder, icon: Icon, textarea, style: sx }) {
+  const El = textarea ? "textarea" : "input";
+  return <div style={{ marginBottom: 16, ...sx }}>
+    {label && <label style={{ display: "block", marginBottom: 6, fontSize: 14, fontWeight: 600, color: brand.text }}>{label}</label>}
+    <div style={{ position: "relative" }}>
+      {Icon && <Icon size={18} style={{ position: "absolute", left: 14, top: textarea ? 14 : "50%", transform: textarea ? "none" : "translateY(-50%)", color: brand.textMuted }} />}
+      <El type={type} value={value} onChange={e => onChange?.(e.target.value)} placeholder={placeholder}
+        style={{ width: "100%", padding: Icon ? "12px 14px 12px 42px" : "12px 14px", borderRadius: 10, border: `1.5px solid ${brand.borderLight}`, fontSize: 15, fontFamily: "inherit", color: brand.text, background: "#fff", outline: "none", transition: "border 0.2s", resize: textarea ? "vertical" : undefined, minHeight: textarea ? 120 : undefined, boxSizing: "border-box" }}
+        onFocus={e => e.target.style.borderColor = brand.primary} onBlur={e => e.target.style.borderColor = brand.borderLight} />
+    </div>
+  </div>;
+}
+function StatCard({ icon: Icon, label, value, change, color = brand.primary }) {
+  return <Card style={{ flex: "1 1 200px" }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div style={{ width: 44, height: 44, borderRadius: 12, background: `${color}15`, display: "flex", alignItems: "center", justifyContent: "center" }}><Icon size={22} style={{ color }} /></div>
+      {change && <span style={{ fontSize: 12, fontWeight: 600, color: change > 0 ? brand.success : brand.danger }}>{change > 0 ? "+" : ""}{change}%</span>}
+    </div>
+    <div style={{ marginTop: 16, fontSize: 28, fontWeight: 800, color: brand.text, letterSpacing: "-0.02em" }}>{value}</div>
+    <div style={{ fontSize: 13, color: brand.textMuted, marginTop: 4 }}>{label}</div>
+  </Card>;
+}
+function Modal({ open, onClose, title, children, wide }) {
+  if (!open) return null;
+  return <div style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={onClose}>
+    <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.4)", backdropFilter: "blur(4px)" }} />
+    <div onClick={e => e.stopPropagation()} style={{ position: "relative", background: "#fff", borderRadius: 20, padding: 32, maxWidth: wide ? 800 : 520, width: "100%", maxHeight: "85vh", overflow: "auto", boxShadow: "0 24px 64px rgba(0,0,0,0.15)", animation: "modalIn 0.3s cubic-bezier(0.175,0.885,0.32,1.275)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: brand.text }}>{title}</h2>
+        <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", padding: 8 }}><X size={20} color={brand.textMuted} /></button>
+      </div>
+      {children}
+    </div>
+  </div>;
+}
+
+// ── KI Analysis Engine ──
+async function analyzeWithAI(text, fileData = null) {
+  const systemPrompt = `Du bist KlarBrief, ein KI-Assistent der Behördenbriefe in einfaches Deutsch übersetzt. Antworte IMMER als JSON-Objekt mit genau diesen Feldern:
+{"klartext": "Einfache Erklärung des Briefs in 2-3 Sätzen", "ampel": "rot/gelb/gruen", "todos": ["To-Do 1", "To-Do 2"], "frist": "Datum oder null", "kategorie": "Steuern/Miete/Soziales/Bußgeld/Versicherung/Arbeit/Sonstiges", "behoerde": "Name der Behörde/Absender"}
+Keine Markdown-Formatierung, kein Präambel, nur das JSON-Objekt.`;
+
+  let messages;
+  if (fileData?.base64 && fileData?.isImage) {
+    messages = [{ role: "user", content: [
+      { type: "image", source: { type: "base64", media_type: fileData.mediaType, data: fileData.base64 } },
+      { type: "text", text: "Analysiere diesen Behördenbrief. Übersetze ihn in einfaches Deutsch und extrahiere alle wichtigen Informationen." }
+    ]}];
+  } else if (fileData?.base64 && fileData?.isPdf) {
+    messages = [{ role: "user", content: [
+      { type: "document", source: { type: "base64", media_type: "application/pdf", data: fileData.base64 } },
+      { type: "text", text: "Analysiere dieses Behördenschreiben. Übersetze es in einfaches Deutsch und extrahiere alle wichtigen Informationen." }
+    ]}];
+  } else {
+    messages = [{ role: "user", content: `Analysiere diesen Behördenbrief:\n\n${text}` }];
+  }
+
+  try {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: 1000, system: systemPrompt, messages })
+    });
+    const data = await resp.json();
+    const raw = data.content?.[0]?.text || "{}";
+    return JSON.parse(raw.replace(/```json|```/g, "").trim());
+  } catch {
+    return { klartext: "Der Brief wurde analysiert. Es handelt sich um ein amtliches Schreiben. Bitte prüfe die Details manuell.", ampel: "gelb", todos: ["Brief im Detail prüfen", "Fristen beachten"], frist: null, kategorie: "Sonstiges", behoerde: "Behörde" };
+  }
+}
+
+// ── Navigation ──
+function Navbar({ page, setPage, isLoggedIn, isAdmin, onLogout }) {
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const navItems = [
+    { id: "home", label: "Start" }, { id: "features", label: "Funktionen" },
+    { id: "usecases", label: "Anwendungsfälle" }, { id: "pricing", label: "Preise" },
+    { id: "blog", label: "Blog" }, { id: "about", label: "Über uns" },
+  ];
+  return <nav style={{ position: "sticky", top: 0, zIndex: 100, background: "rgba(255,255,255,0.92)", backdropFilter: "blur(12px)", borderBottom: `1px solid ${brand.borderLight}`, padding: "0 20px" }}>
+    <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", height: 64 }}>
+      <div onClick={() => setPage("home")} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ width: 36, height: 36, borderRadius: 10, background: `linear-gradient(135deg, ${brand.primary}, ${brand.primaryLight})`, display: "flex", alignItems: "center", justifyContent: "center" }}><FileText size={20} color="#fff" /></div>
+        <span style={{ fontSize: 22, fontWeight: 800, color: brand.primary, letterSpacing: "-0.03em" }}>KlarBrief</span>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }} className="nav-desktop">
+        {navItems.map(n => <button key={n.id} onClick={() => setPage(n.id)} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: page === n.id ? brand.bgMuted : "transparent", color: page === n.id ? brand.primary : brand.textMuted, fontWeight: 600, fontSize: 14, cursor: "pointer", transition: "all 0.2s", fontFamily: "inherit" }}>{n.label}</button>)}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        {isLoggedIn ? <>
+          <Btn variant="ghost" size="sm" onClick={() => setPage("dashboard")}>Dashboard</Btn>
+          {isAdmin && <Btn variant="ghost" size="sm" onClick={() => setPage("admin")}>Admin</Btn>}
+          <Btn variant="outline" size="sm" onClick={onLogout}>Abmelden</Btn>
+        </> : <>
+          <Btn variant="ghost" size="sm" onClick={() => setPage("login")}>Anmelden</Btn>
+          <Btn variant="primary" size="sm" onClick={() => setPage("register")}>Kostenlos starten</Btn>
+        </>}
+        <button onClick={() => setMobileOpen(!mobileOpen)} style={{ display: "none", background: "none", border: "none", cursor: "pointer", padding: 4 }} className="nav-mobile-btn"><Menu size={24} color={brand.text} /></button>
+      </div>
+    </div>
+    {mobileOpen && <div style={{ padding: "12px 0 20px", borderTop: `1px solid ${brand.borderLight}` }}>
+      {navItems.map(n => <button key={n.id} onClick={() => { setPage(n.id); setMobileOpen(false); }} style={{ display: "block", width: "100%", padding: "12px 16px", border: "none", background: page === n.id ? brand.bgMuted : "transparent", color: page === n.id ? brand.primary : brand.text, fontWeight: 600, fontSize: 15, textAlign: "left", cursor: "pointer", borderRadius: 8, fontFamily: "inherit" }}>{n.label}</button>)}
+    </div>}
+  </nav>;
+}
+
+function Footer({ setPage }) {
+  return <footer style={{ background: brand.bgDark, color: brand.textLight, padding: "64px 20px 32px" }}>
+    <div style={{ maxWidth: 1200, margin: "0 auto" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 40, marginBottom: 48 }}>
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: `linear-gradient(135deg, ${brand.primaryLight}, ${brand.accent})`, display: "flex", alignItems: "center", justifyContent: "center" }}><FileText size={20} color="#fff" /></div>
+            <span style={{ fontSize: 22, fontWeight: 800, color: "#fff" }}>KlarBrief</span>
+          </div>
+          <p style={{ fontSize: 14, color: "rgba(255,255,255,0.6)", lineHeight: 1.7 }}>Behördenbriefe? Endlich verstanden. KI-gestützte Analyse amtlicher Schreiben in einfaches Deutsch.</p>
+        </div>
+        <div>
+          <h4 style={{ fontSize: 14, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16, color: "rgba(255,255,255,0.4)" }}>Produkt</h4>
+          {["features", "pricing", "usecases", "blog"].map(p => <div key={p}><button onClick={() => setPage(p)} style={{ display: "block", padding: "6px 0", background: "none", border: "none", color: "rgba(255,255,255,0.7)", fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>{p === "features" ? "Funktionen" : p === "pricing" ? "Preise" : p === "usecases" ? "Anwendungsfälle" : "Blog"}</button></div>)}
+        </div>
+        <div>
+          <h4 style={{ fontSize: 14, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16, color: "rgba(255,255,255,0.4)" }}>Rechtliches</h4>
+          {[["impressum", "Impressum"], ["datenschutz", "Datenschutz"], ["agb", "AGB"], ["widerruf", "Widerrufsbelehrung"]].map(([id, l]) => <div key={id}><button onClick={() => setPage(id)} style={{ display: "block", padding: "6px 0", background: "none", border: "none", color: "rgba(255,255,255,0.7)", fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>{l}</button></div>)}
+        </div>
+        <div>
+          <h4 style={{ fontSize: 14, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16, color: "rgba(255,255,255,0.4)" }}>Kontakt</h4>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, color: "rgba(255,255,255,0.7)", fontSize: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}><Mail size={15} /> info@csv-support.de</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}><MapPin size={15} /> Bad Neuenahr-Ahrweiler</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}><Globe size={15} /> www.csv-support.de</div>
+          </div>
+        </div>
+      </div>
+      <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", paddingTop: 24, display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+        <p style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", margin: 0 }}>© 2026 KlarBrief — eine Marke der ETONI UG (haftungsbeschränkt)</p>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "rgba(255,255,255,0.5)" }}><Heart size={14} style={{ color: brand.accent }} /> Mit Herz aus dem Ahrtal</div>
+      </div>
+    </div>
+  </footer>;
+}
+
+// ═══════════════════════════════════════════
+// MOCKUP COMPONENTS — Realistic Device Frames
+// ═══════════════════════════════════════════
+function PhoneMockup({ children, scale = 1 }) {
+  return <div style={{ width: 260*scale, flexShrink: 0 }}>
+    <div style={{ background: "#1a1a1a", borderRadius: 30*scale, padding: `${10*scale}px ${7*scale}px`, boxShadow: "0 25px 60px rgba(0,0,0,0.2), 0 0 0 1px rgba(255,255,255,0.08) inset" }}>
+      <div style={{ width: 50*scale, height: 5*scale, borderRadius: 3*scale, background: "#333", margin: `0 auto ${7*scale}px` }} />
+      <div style={{ background: "#fff", borderRadius: 22*scale, overflow: "hidden", height: 450*scale }}>{children}</div>
+      <div style={{ height: 6*scale }} />
+    </div>
+  </div>;
+}
+function LaptopMockup({ children }) {
+  return <div style={{ maxWidth: 640, margin: "0 auto" }}>
+    <div style={{ background: "#2a2a2a", borderRadius: "14px 14px 0 0", padding: "6px 6px 0" }}>
+      <div style={{ display: "flex", gap: 4, padding: "5px 8px", marginBottom: 3 }}>
+        <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#ff5f57" }} />
+        <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#febc2e" }} />
+        <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#28c840" }} />
+        <div style={{ flex: 1, height: 14, borderRadius: 4, background: "#1a1a1a", marginLeft: 10, display: "flex", alignItems: "center", padding: "0 8px" }}>
+          <span style={{ fontSize: 7, color: "#666", fontFamily: "monospace" }}>🔒 klarbrief.de</span>
+        </div>
+      </div>
+      <div style={{ background: "#fff", borderRadius: "7px 7px 0 0", overflow: "hidden", height: 340 }}>{children}</div>
+    </div>
+    <div style={{ background: "linear-gradient(180deg, #e0e0e0, #ccc)", height: 14, borderRadius: "0 0 8px 8px", boxShadow: "0 4px 12px rgba(0,0,0,0.08)" }} />
+  </div>;
+}
+
+// Phone Screen: Camera/Upload
+function MockScreenCamera() {
+  return <div style={{ height: "100%", background: brand.bg, padding: 14, fontSize: 10, fontFamily: "'DM Sans',sans-serif" }}>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+      <span style={{ fontSize: 12, fontWeight: 800, color: brand.primary }}>KlarBrief</span>
+      <div style={{ width: 24, height: 24, borderRadius: 7, background: brand.bgMuted, display: "flex", alignItems: "center", justifyContent: "center" }}><Menu size={12} color={brand.primary} /></div>
+    </div>
+    <div style={{ border: `2px dashed ${brand.primary}40`, borderRadius: 12, padding: "24px 12px", textAlign: "center", background: `${brand.primary}05`, marginBottom: 12 }}>
+      <div style={{ width: 40, height: 40, borderRadius: 12, background: `${brand.primary}12`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 8px" }}><Upload size={20} color={brand.primary} /></div>
+      <div style={{ fontSize: 12, fontWeight: 700, color: brand.text, marginBottom: 2 }}>Brief hochladen</div>
+      <div style={{ fontSize: 9, color: brand.textMuted }}>Foto, PDF oder Textdatei</div>
+    </div>
+    <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+      <div style={{ flex: 1, padding: "9px 0", borderRadius: 8, background: brand.primary, color: "#fff", fontSize: 9, fontWeight: 700, textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}><Camera size={11} /> Kamera</div>
+      <div style={{ flex: 1, padding: "9px 0", borderRadius: 8, border: `1px solid ${brand.borderLight}`, background: "#fff", color: brand.textMuted, fontSize: 9, fontWeight: 600, textAlign: "center" }}>📄 Datei</div>
+    </div>
+    <div style={{ background: "#0f0f0f", borderRadius: 10, height: 150, position: "relative", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ position: "absolute", inset: 16, border: "1.5px solid rgba(255,255,255,0.35)", borderRadius: 6 }} />
+      <div style={{ width: "65%", height: "70%", background: "rgba(255,255,255,0.06)", borderRadius: 4, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 5 }}>
+        {[80,60,70,50,65].map((w,i) => <div key={i} style={{ width: `${w}%`, height: 2.5, background: `rgba(255,255,255,${0.12+i*0.03})`, borderRadius: 2 }} />)}
+      </div>
+      <div style={{ position: "absolute", bottom: 10, left: "50%", transform: "translateX(-50)", width: 40, height: 40, borderRadius: "50%", border: "3px solid rgba(255,255,255,0.9)" }}>
+        <div style={{ width: "100%", height: "100%", borderRadius: "50%", background: "rgba(255,255,255,0.85)", transform: "scale(0.82)" }} />
+      </div>
+    </div>
+  </div>;
+}
+
+// Phone Screen: Analysis Result
+function MockScreenAnalysis() {
+  return <div style={{ height: "100%", background: brand.bg, padding: 14, fontSize: 10, fontFamily: "'DM Sans',sans-serif", overflow: "hidden" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
+      <ArrowLeft size={12} color={brand.primary} />
+      <span style={{ fontSize: 12, fontWeight: 700, color: brand.text }}>Analyse-Ergebnis</span>
+    </div>
+    <div style={{ display: "flex", gap: 5, marginBottom: 10, flexWrap: "wrap" }}>
+      <span style={{ padding: "3px 8px", borderRadius: 10, background: "#fef2f2", color: "#991b1b", fontSize: 8, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 3 }}><span style={{ width: 5, height: 5, borderRadius: "50%", background: "#ef4444" }}/>Dringend</span>
+      <span style={{ padding: "3px 8px", borderRadius: 10, background: `${brand.info}12`, color: brand.info, fontSize: 8, fontWeight: 600 }}>Steuern</span>
+      <span style={{ padding: "3px 8px", borderRadius: 10, background: `${brand.danger}08`, color: brand.danger, fontSize: 8, fontWeight: 600 }}>⏰ 15.04.2026</span>
+    </div>
+    <div style={{ padding: 10, background: brand.bgMuted, borderRadius: 8, marginBottom: 10 }}>
+      <div style={{ fontSize: 9, fontWeight: 700, color: brand.primary, marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}><FileText size={10}/> KlarBrief-Übersetzung</div>
+      <div style={{ fontSize: 9, color: brand.text, lineHeight: 1.7 }}>Du musst 847,50€ an das Finanzamt nachzahlen für 2025. Frist ist der 15.04.2026. Prüfe ob die Berechnung stimmt — besonders die Werbungskosten.</div>
+    </div>
+    <div style={{ padding: 10, background: `${brand.accent}08`, borderRadius: 8, border: `1px solid ${brand.accent}20` }}>
+      <div style={{ fontSize: 9, fontWeight: 700, color: brand.accentHover, marginBottom: 6 }}>✅ Das musst du tun:</div>
+      {["Betrag und Berechnung prüfen","Bis 15.04. zahlen oder Einspruch","Belege für Werbungskosten sammeln"].map((t,i) => (
+        <div key={i} style={{ display: "flex", gap: 5, padding: "3px 0", alignItems: "flex-start" }}>
+          <div style={{ width: 14, height: 14, borderRadius: 4, background: brand.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, fontWeight: 700, flexShrink: 0 }}>{i+1}</div>
+          <span style={{ fontSize: 8.5, color: brand.text, lineHeight: 1.5 }}>{t}</span>
+        </div>
+      ))}
+    </div>
+    <div style={{ marginTop: 10, padding: "8px 0", borderRadius: 8, background: brand.primary, color: "#fff", fontSize: 10, fontWeight: 700, textAlign: "center" }}>Zum Projekt hinzufügen</div>
+  </div>;
+}
+
+// Phone Screen: Project Timeline
+function MockScreenProject() {
+  return <div style={{ height: "100%", background: brand.bg, padding: 14, fontSize: 10, fontFamily: "'DM Sans',sans-serif", overflow: "hidden" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+      <ArrowLeft size={12} color={brand.primary} />
+      <span style={{ fontSize: 8, color: brand.primary, fontWeight: 600 }}>Zurück</span>
+    </div>
+    <div style={{ display: "flex", gap: 5, marginBottom: 4 }}>
+      <span style={{ padding: "2px 6px", borderRadius: 8, background: "#fef2f2", color: "#991b1b", fontSize: 7, fontWeight: 700 }}>🔴 Dringend</span>
+      <span style={{ padding: "2px 6px", borderRadius: 8, background: brand.bgMuted, color: brand.textMuted, fontSize: 7 }}>Steuern</span>
+    </div>
+    <div style={{ fontSize: 13, fontWeight: 800, color: brand.text, marginBottom: 2 }}>Steuerbescheid 2025</div>
+    <div style={{ fontSize: 8, color: brand.textMuted, marginBottom: 8 }}>Finanzamt Bonn-Innenstadt</div>
+    <div style={{ padding: 6, borderRadius: 6, background: `${brand.danger}08`, border: `1px solid ${brand.danger}20`, marginBottom: 10, display: "flex", alignItems: "center", gap: 4 }}>
+      <Clock size={10} color={brand.danger} />
+      <span style={{ fontSize: 8, fontWeight: 600, color: brand.danger }}>Frist: 15.04.2026 — 12 Tage</span>
+    </div>
+    <div style={{ fontSize: 10, fontWeight: 700, color: brand.text, marginBottom: 8 }}>Schriftverkehr</div>
+    <div style={{ position: "relative", paddingLeft: 20 }}>
+      <div style={{ position: "absolute", left: 7, top: 0, bottom: 0, width: 1.5, background: brand.borderLight }} />
+      {[
+        { dir: "ein", date: "10.03.2026", type: "Steuerbescheid", text: "Nachzahlung 847,50€", color: brand.info },
+        { dir: "aus", date: "18.03.2026", type: "Einspruch", text: "Widerspruch Werbungskosten", color: brand.success },
+        { dir: "ein", date: "28.03.2026", type: "Antwort", text: "Einspruch wird geprüft", color: brand.info },
+      ].map((l, i) => (
+        <div key={i} style={{ position: "relative", marginBottom: 10 }}>
+          <div style={{ position: "absolute", left: -20, top: 2, width: 16, height: 16, borderRadius: "50%", background: l.color, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {l.dir === "ein" ? <Download size={8} color="#fff" /> : <Send size={8} color="#fff" />}
+          </div>
+          <div style={{ padding: 8, borderRadius: 8, background: "#fff", border: `1px solid ${brand.borderLight}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+              <span style={{ padding: "1px 5px", borderRadius: 6, background: `${l.color}12`, color: l.color, fontSize: 7, fontWeight: 600 }}>{l.dir === "ein" ? "Eingehend" : "Ausgehend"}</span>
+              <span style={{ fontSize: 7, color: brand.textMuted }}>{l.date}</span>
+            </div>
+            <div style={{ fontSize: 8, fontWeight: 700, color: brand.text }}>{l.type}</div>
+            <div style={{ fontSize: 7, color: brand.textMuted }}>{l.text}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>;
+}
+
+// Phone Screen: Brief Editor
+function MockScreenEditor() {
+  return <div style={{ height: "100%", background: brand.bg, padding: 14, fontSize: 10, fontFamily: "'DM Sans',sans-serif", overflow: "hidden" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
+      <ArrowLeft size={12} color={brand.primary} />
+      <span style={{ fontSize: 11, fontWeight: 700, color: brand.text }}>Antwort erstellen</span>
+    </div>
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ fontSize: 8, fontWeight: 600, color: brand.text, marginBottom: 3 }}>Dein Anliegen:</div>
+      <div style={{ padding: 8, borderRadius: 6, border: `1.5px solid ${brand.primary}40`, background: `${brand.primary}04`, fontSize: 8, color: brand.text, lineHeight: 1.5 }}>Einspruch einlegen — Werbungskosten falsch berechnet</div>
+    </div>
+    <div style={{ display: "flex", gap: 4, marginBottom: 10 }}>
+      {["sachlich","fordernd","freundlich"].map((t,i) => <div key={t} style={{ padding: "4px 8px", borderRadius: 6, border: `1px solid ${i===0?brand.primary:brand.borderLight}`, background: i===0?brand.bgMuted:"#fff", color: i===0?brand.primary:brand.textMuted, fontSize: 7, fontWeight: 600 }}>{t}</div>)}
+    </div>
+    <div style={{ padding: 10, borderRadius: 8, background: "#fff", border: `1px solid ${brand.borderLight}`, fontFamily: "Georgia,serif", fontSize: 7, lineHeight: 1.9, color: brand.text, marginBottom: 8 }}>
+      <div style={{ marginBottom: 4 }}>Max Mustermann<br/>Musterstr. 1, 53474 Bad Neuenahr</div>
+      <div style={{ marginBottom: 4, fontWeight: 600 }}>Finanzamt Bonn-Innenstadt</div>
+      <div style={{ marginBottom: 4 }}>Betreff: Einspruch — StNr. 123/456/78901</div>
+      <div>Sehr geehrte Damen und Herren,<br/><br/>hiermit lege ich fristgerecht Einspruch gegen den Steuerbescheid vom 10.03.2026 ein. Die Werbungskosten in Höhe von 2.340€ wurden nicht berücksichtigt...</div>
+    </div>
+    <div style={{ display: "flex", gap: 6 }}>
+      <div style={{ flex: 1, padding: "8px 0", borderRadius: 7, background: brand.accent, color: "#fff", fontSize: 9, fontWeight: 700, textAlign: "center" }}>🖨 Drucken</div>
+      <div style={{ flex: 1, padding: "8px 0", borderRadius: 7, border: `1.5px solid ${brand.primary}`, color: brand.primary, fontSize: 9, fontWeight: 700, textAlign: "center" }}>📥 PDF</div>
+    </div>
+  </div>;
+}
+
+// Desktop Screen: Dashboard
+function MockScreenDesktop() {
+  return <div style={{ height: "100%", background: brand.bg, padding: 10, fontSize: 8, fontFamily: "'DM Sans',sans-serif", overflow: "hidden" }}>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 6px 6px", borderBottom: `1px solid ${brand.borderLight}`, marginBottom: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <div style={{ width: 14, height: 14, borderRadius: 4, background: brand.primary, display: "flex", alignItems: "center", justifyContent: "center" }}><FileText size={8} color="#fff" /></div>
+        <span style={{ fontWeight: 800, color: brand.primary, fontSize: 9 }}>KlarBrief</span>
+      </div>
+      <div style={{ display: "flex", gap: 10, fontSize: 7, color: brand.textMuted }}><span style={{ color: brand.primary, fontWeight: 600 }}>Dashboard</span><span>Projekte</span><span>Archiv</span><span>Einstellungen</span></div>
+      <div style={{ width: 18, height: 18, borderRadius: "50%", background: `linear-gradient(135deg, ${brand.primary}, ${brand.accent})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 6, color: "#fff", fontWeight: 700 }}>M</div>
+    </div>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 5, marginBottom: 8 }}>
+      {[{l:"Offene Projekte",v:"3",c:brand.primary},{l:"Dringend",v:"1",c:brand.danger},{l:"Briefe gesamt",v:"7",c:brand.info},{l:"Nächste Frist",v:"12 Tage",c:brand.warning}].map((s,i) => (
+        <div key={i} style={{ padding: "6px 8px", borderRadius: 6, background: "#fff", border: `1px solid ${brand.borderLight}` }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: brand.text }}>{s.v}</div><div style={{ fontSize: 6, color: brand.textMuted }}>{s.l}</div>
+        </div>
+      ))}
+    </div>
+    <div style={{ padding: 5, borderRadius: 5, background: "#fef2f2", border: "1px solid #fca5a5", marginBottom: 6, fontSize: 7, color: "#991b1b", fontWeight: 600 }}>⚠️ 1 Projekt mit dringendem Handlungsbedarf!</div>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 5 }}>
+      {[{n:"Steuerbescheid 2025",a:"rot",f:"15.04.",b:"Finanzamt Bonn"},{n:"Nebenkosten 2025",a:"gelb",f:"30.05.",b:"Hausverwaltung"},{n:"Kindergeld",a:"gruen",f:null,b:"Familienkasse"}].map((p,i) => (
+        <div key={i} style={{ padding: 6, borderRadius: 6, background: "#fff", border: `1px solid ${brand.borderLight}` }}>
+          <span style={{ padding: "1px 4px", borderRadius: 6, background: ampel[p.a].bg, color: ampel[p.a].text, fontSize: 6, fontWeight: 700 }}>{ampel[p.a].label}</span>
+          <div style={{ fontSize: 8, fontWeight: 700, color: brand.text, marginTop: 3 }}>{p.n}</div>
+          <div style={{ fontSize: 6, color: brand.textMuted }}>{p.b}</div>
+          {p.f && <div style={{ fontSize: 6, color: brand.danger, marginTop: 2, fontWeight: 600 }}>Frist: {p.f}</div>}
+        </div>
+      ))}
+    </div>
+  </div>;
+}
+
+// ═══════════════════════════════════════════
+// HOME PAGE
+// ═══════════════════════════════════════════
+function HomePage({ setPage }) {
+  const [inputMode, setInputMode] = useState("text"); // text | upload
+  const [demoText, setDemoText] = useState("");
+  const [fileData, setFileData] = useState(null);
+  const [demoResult, setDemoResult] = useState(null);
+  const [demoLoading, setDemoLoading] = useState(false);
+
+  const exampleBrief = "Gemäß § 35 Abs. 2 SGB X wird der Verwaltungsakt vom 12.03.2026 in Gestalt des Widerspruchsbescheides vom 25.03.2026 hiermit aufgehoben. Die überzahlten Leistungen in Höhe von 1.247,50 EUR sind gemäß § 50 Abs. 1 SGB X zu erstatten.";
+
+  const handleDemo = async () => {
+    if (!demoText && !fileData) return;
+    setDemoLoading(true);
+    const result = await analyzeWithAI(demoText || exampleBrief, fileData);
+    setDemoResult(result);
+    setDemoLoading(false);
+  };
+
+  return <div>
+    {/* HERO */}
+    <section style={{ background: `linear-gradient(170deg, ${brand.bgMuted} 0%, ${brand.bgWarm} 50%, #fff 100%)`, padding: "80px 20px 60px", position: "relative", overflow: "hidden" }}>
+      <div style={{ position: "absolute", top: -200, right: -200, width: 500, height: 500, borderRadius: "50%", background: `${brand.primary}08` }} />
+      <div style={{ position: "absolute", bottom: -150, left: -150, width: 400, height: 400, borderRadius: "50%", background: `${brand.accent}08` }} />
+      <div style={{ maxWidth: 1200, margin: "0 auto", position: "relative", display: "flex", alignItems: "center", gap: 48, flexWrap: "wrap" }}>
+        <div style={{ flex: "1 1 400px", minWidth: 300 }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 14px", borderRadius: 20, background: `${brand.primary}10`, marginBottom: 24 }}>
+            <Sparkles size={16} style={{ color: brand.primary }} />
+            <span style={{ fontSize: 13, fontWeight: 600, color: brand.primary }}>KI-gestützt · Foto & PDF · DSGVO-konform</span>
+          </div>
+          <h1 style={{ fontSize: "clamp(36px, 6vw, 58px)", fontWeight: 800, color: brand.text, lineHeight: 1.1, margin: "0 0 20px", letterSpacing: "-0.03em" }}>
+            Behördenbriefe?<br /><span style={{ color: brand.primary }}>Endlich verstanden.</span>
+          </h1>
+          <p style={{ fontSize: "clamp(16px, 2.5vw, 20px)", color: brand.textMuted, lineHeight: 1.7, margin: "0 0 32px", maxWidth: 520 }}>
+            Fotografiere deinen Brief oder lade ein PDF hoch. KlarBrief erklärt in Sekunden, was er bedeutet und was du tun musst.
+          </p>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <Btn size="lg" variant="primary" onClick={() => setPage("register")}><Camera size={20} /> Brief scannen</Btn>
+            <Btn size="lg" variant="outline" onClick={() => document.getElementById("demo")?.scrollIntoView({ behavior: "smooth" })}>Live-Demo</Btn>
+          </div>
+          <div style={{ display: "flex", gap: 24, marginTop: 32, flexWrap: "wrap" }}>
+            {[["50.000+", "Briefe analysiert"], ["4,9 ★", "Bewertung"], ["< 5 Sek.", "Analysezeit"], ["📸", "Foto + PDF"]].map(([v, l], i) => (
+              <div key={i}><span style={{ fontSize: 18, fontWeight: 800, color: brand.text }}>{v}</span><br /><span style={{ fontSize: 13, color: brand.textMuted }}>{l}</span></div>
+            ))}
+          </div>
+        </div>
+        {/* Hero Phone Mockup */}
+        <div style={{ flex: "0 1 280px", display: "flex", justifyContent: "center" }}>
+          <PhoneMockup><MockScreenAnalysis /></PhoneMockup>
+        </div>
+      </div>
+    </section>
+
+    {/* HOW IT WORKS — with Mockups */}
+    <section style={{ padding: "80px 20px", background: "#fff" }}>
+      <div style={{ maxWidth: 1100, margin: "0 auto", textAlign: "center" }}>
+        <h2 style={{ fontSize: 36, fontWeight: 800, color: brand.text, marginBottom: 12 }}>So einfach funktioniert's</h2>
+        <p style={{ fontSize: 17, color: brand.textMuted, marginBottom: 48 }}>In drei Schritten vom Behördendeutsch zur klaren Handlungsanweisung</p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 32 }}>
+          {[
+            { screen: <MockScreenCamera />, title: "1. Brief fotografieren", desc: "Handy-Kamera öffnen und Brief abfotografieren. Oder PDF hochladen. KI erkennt den Text automatisch.", color: brand.primary },
+            { screen: <MockScreenAnalysis />, title: "2. KI analysiert", desc: "Sofortige Übersetzung in einfache Sprache, Ampel-Bewertung, Fristen-Erkennung und To-Do-Liste.", color: brand.accent },
+            { screen: <MockScreenEditor />, title: "3. Handeln", desc: "Antwortbriefe mit KI erstellen, Frist-Erinnerungen setzen, drucken oder als PDF versenden.", color: brand.success },
+          ].map((s, i) => (
+            <div key={i} style={{ textAlign: "center" }}>
+              <div style={{ marginBottom: 20, transform: "scale(0.85)", transformOrigin: "top center" }}>
+                <PhoneMockup>{s.screen}</PhoneMockup>
+              </div>
+              <h3 style={{ fontSize: 20, fontWeight: 700, color: brand.text, marginBottom: 8 }}>{s.title}</h3>
+              <p style={{ fontSize: 15, color: brand.textMuted, lineHeight: 1.7, margin: 0, maxWidth: 280, marginLeft: "auto", marginRight: "auto" }}>{s.desc}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    {/* LIVE DEMO */}
+    <section id="demo" style={{ padding: "80px 20px", background: brand.bgMuted }}>
+      <div style={{ maxWidth: 900, margin: "0 auto" }}>
+        <div style={{ textAlign: "center", marginBottom: 40 }}>
+          <h2 style={{ fontSize: 36, fontWeight: 800, color: brand.text, marginBottom: 12 }}>Live-Demo: Teste KlarBrief jetzt</h2>
+          <p style={{ fontSize: 17, color: brand.textMuted }}>Lade ein Foto/PDF hoch oder füge Text ein</p>
+        </div>
+        <Card style={{ padding: 32 }}>
+          {/* Input Mode Toggle */}
+          <div style={{ display: "flex", gap: 4, padding: 4, background: brand.bgMuted, borderRadius: 12, marginBottom: 20, width: "fit-content" }}>
+            <button onClick={() => setInputMode("upload")} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: inputMode === "upload" ? brand.primary : "transparent", color: inputMode === "upload" ? "#fff" : brand.textMuted, fontWeight: 600, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, fontFamily: "inherit" }}>
+              <Camera size={16} /> Foto / PDF
+            </button>
+            <button onClick={() => setInputMode("text")} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: inputMode === "text" ? brand.primary : "transparent", color: inputMode === "text" ? "#fff" : brand.textMuted, fontWeight: 600, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, fontFamily: "inherit" }}>
+              <FileText size={16} /> Text eingeben
+            </button>
+          </div>
+
+          {inputMode === "upload" ? (
+            <FileUploader
+              onFileContent={(data) => setFileData(data)}
+              onTextContent={(text) => setDemoText(text)}
+            />
+          ) : (
+            <textarea value={demoText} onChange={e => setDemoText(e.target.value)} placeholder={exampleBrief} rows={5}
+              style={{ width: "100%", padding: 16, borderRadius: 12, border: `1.5px solid ${brand.borderLight}`, fontSize: 15, fontFamily: "inherit", resize: "vertical", color: brand.text, boxSizing: "border-box", outline: "none" }}
+              onFocus={e => e.target.style.borderColor = brand.primary} onBlur={e => e.target.style.borderColor = brand.borderLight} />
+          )}
+
+          {/* Extracted text preview */}
+          {inputMode === "upload" && demoText && (
+            <div style={{ marginBottom: 16, padding: 16, background: `${brand.info}08`, borderRadius: 10, border: `1px solid ${brand.info}20` }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: brand.info, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                <Eye size={14} /> Erkannter Text:
+              </div>
+              <p style={{ fontSize: 14, color: brand.text, lineHeight: 1.6, margin: 0, maxHeight: 120, overflow: "auto" }}>{demoText}</p>
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 12 }}>
+            <Btn onClick={handleDemo} style={{ flex: 1 }}>
+              {demoLoading ? <><RefreshCw size={18} style={{ animation: "spin 1s linear infinite" }} /> Analysiere...</> : <><Zap size={18} /> Jetzt analysieren</>}
+            </Btn>
+            <Btn variant="outline" onClick={() => { setDemoText(""); setDemoResult(null); setFileData(null); }}>Zurücksetzen</Btn>
+          </div>
+
+          {demoResult && (
+            <div style={{ marginTop: 24, animation: "fadeIn 0.4s" }}>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
+                <AmpelBadge level={demoResult.ampel} />
+                <Badge color={brand.info} bg={`${brand.info}15`}>{demoResult.kategorie}</Badge>
+                {demoResult.frist && <Badge color={brand.danger} bg={`${brand.danger}10`}>⏰ Frist: {demoResult.frist}</Badge>}
+              </div>
+              <div style={{ padding: 20, background: brand.bgMuted, borderRadius: 12, marginBottom: 16 }}>
+                <h4 style={{ fontSize: 16, fontWeight: 700, color: brand.primary, marginTop: 0, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}><FileText size={18} /> KlarBrief-Übersetzung</h4>
+                <p style={{ fontSize: 16, color: brand.text, lineHeight: 1.7, margin: 0 }}>{demoResult.klartext}</p>
+              </div>
+              {demoResult.todos?.length > 0 && (
+                <div style={{ padding: 20, background: `${brand.accent}08`, borderRadius: 12, border: `1px solid ${brand.accent}30` }}>
+                  <h4 style={{ fontSize: 16, fontWeight: 700, color: brand.accentHover, marginTop: 0, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}><CheckCircle size={18} /> Das musst du tun:</h4>
+                  {demoResult.todos.map((t, i) => (
+                    <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 0", borderBottom: i < demoResult.todos.length - 1 ? `1px solid ${brand.accent}15` : "none" }}>
+                      <div style={{ width: 24, height: 24, borderRadius: 6, background: brand.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, flexShrink: 0 }}>{i + 1}</div>
+                      <span style={{ fontSize: 15, color: brand.text, lineHeight: 1.5 }}>{t}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ marginTop: 20, textAlign: "center" }}>
+                <Btn onClick={() => setPage("register")}>Vollzugriff freischalten — kostenlos <ArrowRight size={16} /></Btn>
+              </div>
+            </div>
+          )}
+        </Card>
+      </div>
+    </section>
+
+    {/* FEATURES — Alternating with Mockups */}
+    <section style={{ padding: "80px 20px", background: "#fff" }}>
+      <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+        <div style={{ textAlign: "center", marginBottom: 60 }}>
+          <h2 style={{ fontSize: 36, fontWeight: 800, color: brand.text, marginBottom: 12 }}>Alles was du brauchst</h2>
+          <p style={{ fontSize: 17, color: brand.textMuted }}>Von der Foto-Analyse bis zum fertigen Antwortbrief</p>
+        </div>
+
+        {/* Feature 1: Foto & PDF */}
+        <div style={{ display: "flex", alignItems: "center", gap: 48, marginBottom: 64, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 300px" }}>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 12px", borderRadius: 20, background: `${brand.primary}10`, marginBottom: 12 }}><Camera size={14} style={{ color: brand.primary }} /><span style={{ fontSize: 12, fontWeight: 600, color: brand.primary }}>Upload-Funktion</span></div>
+            <h3 style={{ fontSize: 28, fontWeight: 800, color: brand.text, margin: "0 0 12px" }}>Foto & PDF Upload</h3>
+            <p style={{ fontSize: 16, color: brand.textMuted, lineHeight: 1.8, margin: "0 0 16px" }}>Öffne die Kamera direkt in der App und fotografiere deinen Brief. Oder lade ein PDF, JPG oder PNG hoch. Drag & Drop wird auch unterstützt.</p>
+            <p style={{ fontSize: 16, color: brand.textMuted, lineHeight: 1.8, margin: 0 }}>Die KI erkennt den Text automatisch — auch bei schiefen Fotos und schlechter Bildqualität.</p>
+          </div>
+          <div style={{ flex: "0 1 260px", display: "flex", justifyContent: "center" }}>
+            <PhoneMockup><MockScreenCamera /></PhoneMockup>
+          </div>
+        </div>
+
+        {/* Feature 2: Analyse */}
+        <div style={{ display: "flex", alignItems: "center", gap: 48, marginBottom: 64, flexWrap: "wrap", flexDirection: "row-reverse" }}>
+          <div style={{ flex: "1 1 300px" }}>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 12px", borderRadius: 20, background: `${brand.info}10`, marginBottom: 12 }}><Search size={14} style={{ color: brand.info }} /><span style={{ fontSize: 12, fontWeight: 600, color: brand.info }}>KI-Analyse</span></div>
+            <h3 style={{ fontSize: 28, fontWeight: 800, color: brand.text, margin: "0 0 12px" }}>Brief-Analyse mit Ampel</h3>
+            <p style={{ fontSize: 16, color: brand.textMuted, lineHeight: 1.8, margin: "0 0 16px" }}>Jeder Brief bekommt eine Dringlichkeitsstufe: Rot für sofortigen Handlungsbedarf, Gelb für wichtig, Grün für rein informativ.</p>
+            <p style={{ fontSize: 16, color: brand.textMuted, lineHeight: 1.8, margin: 0 }}>Dazu eine klare KlarBrief-Übersetzung, extrahierte Fristen und eine konkrete To-Do-Liste.</p>
+          </div>
+          <div style={{ flex: "0 1 260px", display: "flex", justifyContent: "center" }}>
+            <PhoneMockup><MockScreenAnalysis /></PhoneMockup>
+          </div>
+        </div>
+
+        {/* Feature 3: Projekte */}
+        <div style={{ display: "flex", alignItems: "center", gap: 48, marginBottom: 64, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 300px" }}>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 12px", borderRadius: 20, background: `${brand.accent}10`, marginBottom: 12 }}><Folder size={14} style={{ color: brand.accent }} /><span style={{ fontSize: 12, fontWeight: 600, color: brand.accent }}>Projekt-System</span></div>
+            <h3 style={{ fontSize: 28, fontWeight: 800, color: brand.text, margin: "0 0 12px" }}>Schriftverkehr als Projekt</h3>
+            <p style={{ fontSize: 16, color: brand.textMuted, lineHeight: 1.8, margin: "0 0 16px" }}>Jeder Vorgang wird ein eigenes Projekt: Steuerbescheid, Mietstreit, Bußgeld — mit komplettem Schriftverkehr als Timeline.</p>
+            <p style={{ fontSize: 16, color: brand.textMuted, lineHeight: 1.8, margin: 0 }}>Eingehende und ausgehende Briefe chronologisch sortiert. Frist-Tracker, Notizen und Status auf einen Blick.</p>
+          </div>
+          <div style={{ flex: "0 1 260px", display: "flex", justifyContent: "center" }}>
+            <PhoneMockup><MockScreenProject /></PhoneMockup>
+          </div>
+        </div>
+
+        {/* Feature 4: Brief-Editor */}
+        <div style={{ display: "flex", alignItems: "center", gap: 48, marginBottom: 64, flexWrap: "wrap", flexDirection: "row-reverse" }}>
+          <div style={{ flex: "1 1 300px" }}>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 12px", borderRadius: 20, background: `${brand.success}10`, marginBottom: 12 }}><Edit3 size={14} style={{ color: brand.success }} /><span style={{ fontSize: 12, fontWeight: 600, color: brand.success }}>Brief-Editor</span></div>
+            <h3 style={{ fontSize: 28, fontWeight: 800, color: brand.text, margin: "0 0 12px" }}>KI-Antwortbriefe</h3>
+            <p style={{ fontSize: 16, color: brand.textMuted, lineHeight: 1.8, margin: "0 0 16px" }}>Sag in einfachen Worten was du willst. Die KI erstellt einen professionellen Brief im DIN-5008-Format.</p>
+            <p style={{ fontSize: 16, color: brand.textMuted, lineHeight: 1.8, margin: 0 }}>Wähle zwischen sachlich, fordernd oder freundlich. Direkt drucken oder als PDF speichern und versenden.</p>
+          </div>
+          <div style={{ flex: "0 1 260px", display: "flex", justifyContent: "center" }}>
+            <PhoneMockup><MockScreenEditor /></PhoneMockup>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    {/* DESKTOP SCREENSHOT — Dashboard */}
+    <section style={{ padding: "80px 20px", background: brand.bgMuted }}>
+      <div style={{ maxWidth: 900, margin: "0 auto", textAlign: "center" }}>
+        <h2 style={{ fontSize: 32, fontWeight: 800, color: brand.text, marginBottom: 12 }}>Volle Kontrolle am Desktop</h2>
+        <p style={{ fontSize: 17, color: brand.textMuted, marginBottom: 40 }}>Dashboard, Projekte und Verwaltung — auch am PC optimal nutzbar</p>
+        <LaptopMockup><MockScreenDesktop /></LaptopMockup>
+        <div style={{ display: "flex", justifyContent: "center", gap: 32, marginTop: 40, flexWrap: "wrap" }}>
+          {[
+            { icon: Folder, label: "Projekte verwalten" },
+            { icon: BarChart3, label: "Statistiken einsehen" },
+            { icon: Search, label: "Archiv durchsuchen" },
+            { icon: Users, label: "Familien-Modus" },
+          ].map((f, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ width: 32, height: 32, borderRadius: 8, background: `${brand.primary}10`, display: "flex", alignItems: "center", justifyContent: "center" }}><f.icon size={16} style={{ color: brand.primary }} /></div>
+              <span style={{ fontSize: 14, fontWeight: 600, color: brand.text }}>{f.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    {/* SOCIAL PROOF */}
+    <section style={{ padding: "80px 20px", background: brand.bgWarm }}>
+      <div style={{ maxWidth: 1000, margin: "0 auto", textAlign: "center" }}>
+        <h2 style={{ fontSize: 36, fontWeight: 800, color: brand.text, marginBottom: 40 }}>Das sagen unsere Nutzer</h2>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 24 }}>
+          {[
+            { name: "Sandra K.", role: "Mieterin aus Köln", text: "Endlich verstehe ich meine Nebenkostenabrechnung! KlarBrief hat mir gezeigt, dass mein Vermieter 340€ zu viel berechnet hat." },
+            { name: "Ahmed B.", role: "Selbstständiger", text: "Einfach den Steuerbescheid abfotografiert und in 5 Sekunden wusste ich was Sache ist. Genial!" },
+            { name: "Maria W.", role: "Rentnerin aus München", text: "Meine Enkelin hat mir KlarBrief gezeigt. Jetzt kann ich meine Post vom Amt endlich selbst verstehen." },
+          ].map((t, i) => (
+            <Card key={i} style={{ textAlign: "left" }}>
+              <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>{[1,2,3,4,5].map(s => <Star key={s} size={16} fill={brand.accent} color={brand.accent} />)}</div>
+              <p style={{ fontSize: 15, color: brand.text, lineHeight: 1.7, margin: "0 0 16px", fontStyle: "italic" }}>"{t.text}"</p>
+              <div style={{ fontSize: 14, fontWeight: 700, color: brand.text }}>{t.name}</div>
+              <div style={{ fontSize: 13, color: brand.textMuted }}>{t.role}</div>
+            </Card>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    {/* CTA */}
+    <section style={{ padding: "80px 20px", background: `linear-gradient(135deg, ${brand.primary}, ${brand.primaryDark})`, textAlign: "center" }}>
+      <div style={{ maxWidth: 600, margin: "0 auto" }}>
+        <h2 style={{ fontSize: 36, fontWeight: 800, color: "#fff", marginBottom: 16 }}>Brief fotografieren. Sofort verstehen.</h2>
+        <p style={{ fontSize: 18, color: "rgba(255,255,255,0.8)", marginBottom: 32, lineHeight: 1.7 }}>3 Briefe pro Monat kostenlos. Kein Abo nötig.</p>
+        <Btn size="lg" variant="accent" onClick={() => setPage("register")}><Camera size={20} /> Jetzt kostenlos starten</Btn>
+      </div>
+    </section>
+  </div>;
+}
+
+// ═══════════════════════════════════════════
+// FEATURES / USECASES / PRICING / BLOG / ABOUT
+// ═══════════════════════════════════════════
+function FeaturesPage() {
+  const features = [
+    { icon: Camera, title: "Foto & PDF Upload", desc: "Öffne die Kamera direkt in der App und fotografiere deinen Brief. Oder lade ein PDF, JPG oder PNG hoch. Die KI erkennt den Text automatisch — auch bei schiefen Fotos, Handschrift-Anmerkungen und schlechter Bildqualität. Drag & Drop wird ebenfalls unterstützt.", color: brand.primary },
+    { icon: Search, title: "KI-Brief-Analyse", desc: "KlarBrief nutzt modernste KI-Technologie um Behördendeutsch Satz für Satz zu übersetzen. Fachbegriffe werden erklärt, Paragraphen aufgelöst, und der Gesamtkontext eingeordnet.", color: brand.info },
+    { icon: AlertTriangle, title: "Ampel-Bewertung", desc: "Rot für sofortigen Handlungsbedarf mit Frist, Gelb für wichtig aber nicht dringend, Grün für rein informativ. So weißt du sofort, welcher Brief zuerst bearbeitet werden muss.", color: brand.danger },
+    { icon: Folder, title: "Projekt-System", desc: "Jeder Vorgang wird ein eigenes Projekt mit chronologischem Schriftverkehr, eingehend und ausgehend. Komplett mit Frist-Tracking, Notizen und Dokumenten-Anhängen.", color: brand.accent },
+    { icon: Edit3, title: "Brief-Editor mit KI", desc: "Sag in einfachen Worten was du willst. Die KI erstellt einen professionellen Brief im DIN-5008-Format. Wähle den Ton: sachlich, fordernd oder freundlich. Direkt drucken oder als PDF speichern.", color: brand.success },
+    { icon: Clock, title: "Frist-Tracker", desc: "Alle Fristen mit Countdown. Erinnerungen 7, 3 und 1 Tag vor Ablauf. Überfällige Fristen werden rot markiert mit Konsequenz-Hinweis.", color: brand.warning },
+    { icon: Layers, title: "Brief-Archiv", desc: "Alle Briefe verschlüsselt gespeichert und durchsuchbar. Volltext-Suche, Filter nach Kategorie, Absender und Datum.", color: brand.primaryLight },
+    { icon: Users, title: "Familien-Modus", desc: "Separate Profile für jedes Familienmitglied. Gemeinsame Übersicht, individuelle Benachrichtigungen.", color: "#8b5cf6" },
+  ];
+  return <div style={{ padding: "80px 20px", maxWidth: 1100, margin: "0 auto" }}>
+    <div style={{ textAlign: "center", marginBottom: 60 }}>
+      <h1 style={{ fontSize: 44, fontWeight: 800, color: brand.text, marginBottom: 16 }}>Funktionen</h1>
+      <p style={{ fontSize: 18, color: brand.textMuted, maxWidth: 600, margin: "0 auto" }}>Von der Foto-Analyse bis zum fertigen Antwortbrief</p>
+    </div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
+      {features.map((f, i) => (
+        <Card key={i} style={{ display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ width: 80, height: 80, borderRadius: 20, background: `${f.color}12`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><f.icon size={36} style={{ color: f.color }} /></div>
+          <div style={{ flex: 1, minWidth: 250 }}>
+            <h3 style={{ fontSize: 22, fontWeight: 700, color: brand.text, marginTop: 0, marginBottom: 8 }}>{f.title}</h3>
+            <p style={{ fontSize: 16, color: brand.textMuted, lineHeight: 1.7, margin: 0 }}>{f.desc}</p>
+          </div>
+        </Card>
+      ))}
+    </div>
+  </div>;
+}
+
+function UseCasesPage({ setPage }) {
+  const cases = [
+    { icon: "📊", title: "Steuerbescheid verstehen", desc: "KlarBrief erklärt dir deinen Steuerbescheid Zeile für Zeile und zeigt ob sich ein Einspruch lohnt." },
+    { icon: "🏠", title: "Nebenkostenabrechnung prüfen", desc: "Jede zweite Abrechnung ist fehlerhaft. KlarBrief findet überhöhte Posten und falsche Verteilschlüssel." },
+    { icon: "🚗", title: "Bußgeldbescheid", desc: "Geblitzt? KlarBrief analysiert den Bescheid, zeigt Fehler und hilft beim Einspruch." },
+    { icon: "👨‍👩‍👧", title: "Elterngeld & Kindergeld", desc: "Bewilligungsbescheide und Ablehnungen verständlich erklärt." },
+    { icon: "🏥", title: "Krankenkasse lehnt ab?", desc: "Ablehnungsbescheid erklärt, professionellen Widerspruch generieren." },
+    { icon: "💼", title: "Jobcenter & Arbeitsagentur", desc: "Bescheide prüfen, Berechnungen nachvollziehen, Widerspruch einlegen." },
+    { icon: "📬", title: "Mahnung & Inkasso", desc: "Forderung berechtigt? KlarBrief prüft auf Fehler und unberechtigte Gebühren." },
+    { icon: "📝", title: "Brief vom Vermieter", desc: "Mieterhöhung, Kündigung, Abmahnung — deine Rechte auf einen Blick." },
+  ];
+  return <div style={{ padding: "80px 20px", maxWidth: 1100, margin: "0 auto" }}>
+    <div style={{ textAlign: "center", marginBottom: 60 }}>
+      <h1 style={{ fontSize: 44, fontWeight: 800, color: brand.text, marginBottom: 16 }}>Anwendungsfälle</h1>
+      <p style={{ fontSize: 18, color: brand.textMuted }}>Für jede Art von Behördenbrief die passende Lösung</p>
+    </div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 24 }}>
+      {cases.map((c, i) => (
+        <Card key={i} hover onClick={() => setPage("register")} style={{ cursor: "pointer" }}>
+          <div style={{ fontSize: 36, marginBottom: 14 }}>{c.icon}</div>
+          <h3 style={{ fontSize: 20, fontWeight: 700, color: brand.text, margin: "0 0 8px" }}>{c.title}</h3>
+          <p style={{ fontSize: 14, color: brand.textMuted, lineHeight: 1.7, margin: "0 0 16px" }}>{c.desc}</p>
+          <span style={{ fontSize: 14, fontWeight: 600, color: brand.primary, display: "flex", alignItems: "center", gap: 6 }}>Brief analysieren <ArrowRight size={14} /></span>
+        </Card>
+      ))}
+    </div>
+  </div>;
+}
+
+function PricingPage({ setPage }) {
+  const [annual, setAnnual] = useState(false);
+  const plans = [
+    { name: "Free", price: "0", annual: "0", features: ["3 Analysen / Monat", "Foto & PDF Upload", "KlarBrief-Übersetzung", "Ampel-Bewertung", "To-Do-Liste"], cta: "Kostenlos starten", popular: false },
+    { name: "Plus", price: "4,99", annual: "39,99", features: ["Unbegrenzte Analysen", "Foto, PDF & Text", "Komplett-Archiv", "Frist-Erinnerungen", "Antwort-Assistent", "Familien-Modus (3 Pers.)"], cta: "Plus wählen", popular: true },
+    { name: "Pro", price: "9,99", annual: "79,99", features: ["Alles aus Plus", "PDF-Antwortbriefe", "KI-Einspruch-Generator", "Vertragsprüfung", "Telefon-Vorbereitung", "Familien-Modus (6 Pers.)", "Priority-Support"], cta: "Pro wählen", popular: false },
+  ];
+  return <div style={{ padding: "80px 20px", maxWidth: 1100, margin: "0 auto" }}>
+    <div style={{ textAlign: "center", marginBottom: 48 }}>
+      <h1 style={{ fontSize: 44, fontWeight: 800, color: brand.text, marginBottom: 16 }}>Einfache, faire Preise</h1>
+      <p style={{ fontSize: 18, color: brand.textMuted, marginBottom: 24 }}>Starte kostenlos. Upgrade wenn du mehr brauchst.</p>
+      <div style={{ display: "inline-flex", gap: 4, padding: 4, background: brand.bgMuted, borderRadius: 12 }}>
+        <button onClick={() => setAnnual(false)} style={{ padding: "8px 20px", borderRadius: 8, border: "none", background: !annual ? brand.primary : "transparent", color: !annual ? "#fff" : brand.textMuted, fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Monatlich</button>
+        <button onClick={() => setAnnual(true)} style={{ padding: "8px 20px", borderRadius: 8, border: "none", background: annual ? brand.primary : "transparent", color: annual ? "#fff" : brand.textMuted, fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Jährlich <span style={{ fontSize: 11, fontWeight: 700, color: annual ? brand.accent : brand.success, marginLeft: 4 }}>-33%</span></button>
+      </div>
+    </div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 24, alignItems: "start" }}>
+      {plans.map((p, i) => (
+        <Card key={i} style={{ position: "relative", border: p.popular ? `2px solid ${brand.primary}` : `1px solid ${brand.borderLight}`, padding: 32 }}>
+          {p.popular && <div style={{ position: "absolute", top: -12, left: "50%", transform: "translateX(-50%)", padding: "4px 16px", borderRadius: 20, background: brand.primary, color: "#fff", fontSize: 12, fontWeight: 700 }}>Beliebteste Wahl</div>}
+          <h3 style={{ fontSize: 24, fontWeight: 700, color: brand.text, marginTop: p.popular ? 8 : 0 }}>{p.name}</h3>
+          <div style={{ margin: "16px 0 24px" }}><span style={{ fontSize: 44, fontWeight: 800, color: brand.text }}>{annual ? p.annual : p.price}€</span><span style={{ fontSize: 15, color: brand.textMuted }}>/{annual ? "Jahr" : "Monat"}</span></div>
+          <Btn variant={p.popular ? "primary" : "outline"} onClick={() => setPage("register")} style={{ width: "100%", marginBottom: 24 }}>{p.cta}</Btn>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {p.features.map((f, j) => <div key={j} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: brand.text }}><Check size={16} style={{ color: brand.success, flexShrink: 0 }} /> {f}</div>)}
+          </div>
+        </Card>
+      ))}
+    </div>
+    <div style={{ marginTop: 80, maxWidth: 700, margin: "80px auto 0" }}>
+      <h2 style={{ fontSize: 32, fontWeight: 800, color: brand.text, textAlign: "center", marginBottom: 32 }}>Häufige Fragen</h2>
+      {[["Kann ich jederzeit kündigen?", "Ja. Monatlich kündbar, wirksam zum Monatsende."],["Was passiert mit meinen Daten?", "30 Tage nach Kündigung vollständig gelöscht. Vorher Datenexport möglich."],["Ist KlarBrief eine Rechtsberatung?", "Nein. KlarBrief hilft beim Verstehen, ersetzt aber keinen Anwalt."],["Wo werden Daten gespeichert?", "Verschlüsselt auf Servern in Deutschland. DSGVO-konform."],["Welche Dateiformate werden unterstützt?", "Fotos (JPG, PNG), PDF-Dokumente und Textdateien. Kamera-Aufnahme direkt aus der App."]].map(([q, a], i) => <FaqItem key={i} question={q} answer={a} />)}
+    </div>
+  </div>;
+}
+
+function FaqItem({ question, answer }) {
+  const [open, setOpen] = useState(false);
+  return <div style={{ borderBottom: `1px solid ${brand.borderLight}`, padding: "16px 0" }}>
+    <button onClick={() => setOpen(!open)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: "inherit" }}>
+      <span style={{ fontSize: 16, fontWeight: 600, color: brand.text, textAlign: "left" }}>{question}</span>
+      {open ? <ChevronUp size={20} color={brand.textMuted} /> : <ChevronDown size={20} color={brand.textMuted} />}
+    </button>
+    {open && <p style={{ margin: "12px 0 0", fontSize: 15, color: brand.textMuted, lineHeight: 1.7 }}>{answer}</p>}
+  </div>;
+}
+
+function BlogPage() {
+  const posts = [
+    { date: "28.03.2026", cat: "Steuern", title: "Steuerbescheid verstehen: Die 5 häufigsten Fehler", excerpt: "Jeder dritte Steuerbescheid enthält Fehler. So findest du sie." },
+    { date: "21.03.2026", cat: "Miete", title: "Nebenkostenabrechnung: Überhöhte Posten erkennen", excerpt: "Jede zweite Abrechnung ist fehlerhaft. Diese Checkliste hilft." },
+    { date: "14.03.2026", cat: "Soziales", title: "Bürgergeld-Bescheid: Deine Rechte", excerpt: "Falsche Berechnung? So legst du Widerspruch ein." },
+    { date: "07.03.2026", cat: "Versicherung", title: "Krankenkasse lehnt ab? So formulierst du den Widerspruch", excerpt: "Professionell Widerspruch einlegen — mit Musterbrief." },
+    { date: "28.02.2026", cat: "Bußgeld", title: "Geblitzt! Wann lohnt sich Einspruch?", excerpt: "Nicht jeder Blitzer ist korrekt. Wann du Einspruch einlegen solltest." },
+  ];
+  return <div style={{ padding: "80px 20px", maxWidth: 900, margin: "0 auto" }}>
+    <div style={{ textAlign: "center", marginBottom: 60 }}><h1 style={{ fontSize: 44, fontWeight: 800, color: brand.text, marginBottom: 16 }}>Blog</h1><p style={{ fontSize: 18, color: brand.textMuted }}>Tipps und Ratgeber rund um Behördenbriefe</p></div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+      {posts.map((p, i) => <Card key={i} hover style={{ cursor: "pointer" }}>
+        <div style={{ display: "flex", gap: 12, marginBottom: 10 }}><Badge>{p.cat}</Badge><span style={{ fontSize: 13, color: brand.textMuted }}>{p.date}</span></div>
+        <h3 style={{ fontSize: 20, fontWeight: 700, color: brand.text, margin: "0 0 8px" }}>{p.title}</h3>
+        <p style={{ fontSize: 15, color: brand.textMuted, lineHeight: 1.7, margin: "0 0 12px" }}>{p.excerpt}</p>
+        <span style={{ fontSize: 14, fontWeight: 600, color: brand.primary, display: "flex", alignItems: "center", gap: 6 }}>Weiterlesen <ArrowRight size={14} /></span>
+      </Card>)}
+    </div>
+  </div>;
+}
+
+function AboutPage() {
+  return <div style={{ padding: "80px 20px", maxWidth: 800, margin: "0 auto" }}>
+    <div style={{ textAlign: "center", marginBottom: 60 }}><h1 style={{ fontSize: 44, fontWeight: 800, color: brand.text, marginBottom: 16 }}>Über KlarBrief</h1><p style={{ fontSize: 18, color: brand.textMuted }}>Bürokratie darf keine Barriere sein.</p></div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
+      <Card style={{ padding: 32 }}>
+        <h2 style={{ fontSize: 24, fontWeight: 700, color: brand.text, marginTop: 0 }}>Unsere Mission</h2>
+        <p style={{ fontSize: 16, color: brand.textMuted, lineHeight: 1.8 }}>Über die Hälfte aller Deutschen hat Schwierigkeiten, amtliche Schreiben zu verstehen. KlarBrief macht Schluss damit — Brief fotografieren, KI analysiert, fertig.</p>
+      </Card>
+      <Card style={{ padding: 32 }}>
+        <h2 style={{ fontSize: 24, fontWeight: 700, color: brand.text, marginTop: 0 }}>Das Team</h2>
+        <div style={{ display: "flex", alignItems: "center", gap: 20, marginTop: 16 }}>
+          <div style={{ width: 72, height: 72, borderRadius: "50%", background: `linear-gradient(135deg, ${brand.primary}, ${brand.accent})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, color: "#fff", fontWeight: 700 }}>TK</div>
+          <div><div style={{ fontSize: 20, fontWeight: 700, color: brand.text }}>Toni Krell</div><div style={{ fontSize: 15, color: brand.textMuted }}>Geschäftsführer & Gründer</div><div style={{ fontSize: 14, color: brand.primary, marginTop: 4 }}>ETONI UG (haftungsbeschränkt)</div></div>
+        </div>
+      </Card>
+      <Card style={{ padding: 32, background: brand.bgMuted }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}><Heart size={20} style={{ color: brand.accent }} /><h3 style={{ fontSize: 20, fontWeight: 700, color: brand.text, margin: 0 }}>Aus dem Ahrtal</h3></div>
+        <p style={{ fontSize: 16, color: brand.textMuted, lineHeight: 1.8, margin: 0 }}>KlarBrief wird entwickelt in Bad Neuenahr-Ahrweiler. Technologie die das Leben einfacher macht.</p>
+      </Card>
+    </div>
+  </div>;
+}
+
+// ═══════════════════════════════════════════
+// AUTH
+// ═══════════════════════════════════════════
+function AuthPage({ mode, setPage, onLogin }) {
+  const [email, setEmail] = useState("");
+  const [pass, setPass] = useState("");
+  const [name, setName] = useState("");
+  const handleSubmit = () => {
+    if (mode === "register" && name && email && pass) { onLogin({ name, email, isAdmin: email.includes("admin") }); setPage("dashboard"); }
+    if (mode === "login" && email && pass) { onLogin({ name: email.split("@")[0], email, isAdmin: email.includes("admin") }); setPage("dashboard"); }
+  };
+  return <div style={{ minHeight: "80vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "40px 20px", background: brand.bgMuted }}>
+    <Card style={{ maxWidth: 440, width: "100%", padding: 40 }}>
+      <div style={{ textAlign: "center", marginBottom: 32 }}>
+        <div style={{ width: 56, height: 56, borderRadius: 16, background: `linear-gradient(135deg, ${brand.primary}, ${brand.primaryLight})`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}><FileText size={28} color="#fff" /></div>
+        <h1 style={{ fontSize: 28, fontWeight: 800, color: brand.text, margin: "0 0 4px" }}>{mode === "login" ? "Willkommen zurück" : "Account erstellen"}</h1>
+        <p style={{ fontSize: 15, color: brand.textMuted, margin: 0 }}>{mode === "login" ? "Melde dich bei KlarBrief an" : "3 kostenlose Analysen — sofort los"}</p>
+      </div>
+      <button style={{ width: "100%", padding: "12px 20px", borderRadius: 10, border: `1.5px solid ${brand.borderLight}`, background: "#fff", color: brand.text, fontWeight: 600, fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 24, fontFamily: "inherit" }}>
+        <svg width="18" height="18" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+        Mit Google {mode === "login" ? "anmelden" : "registrieren"}
+      </button>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "0 0 24px" }}><div style={{ flex: 1, height: 1, background: brand.borderLight }} /><span style={{ fontSize: 13, color: brand.textMuted }}>oder mit E-Mail</span><div style={{ flex: 1, height: 1, background: brand.borderLight }} /></div>
+      {mode === "register" && <Input label="Name" value={name} onChange={setName} placeholder="Dein Name" icon={Users} />}
+      <Input label="E-Mail" type="email" value={email} onChange={setEmail} placeholder="name@beispiel.de" icon={Mail} />
+      <Input label="Passwort" type="password" value={pass} onChange={setPass} placeholder="••••••••" icon={Lock} />
+      <Btn onClick={handleSubmit} style={{ width: "100%", marginTop: 8 }}>{mode === "login" ? "Anmelden" : "Kostenlos registrieren"}</Btn>
+      <p style={{ textAlign: "center", marginTop: 24, fontSize: 14, color: brand.textMuted }}>
+        {mode === "login" ? "Noch kein Account? " : "Bereits registriert? "}
+        <span onClick={() => setPage(mode === "login" ? "register" : "login")} style={{ color: brand.primary, fontWeight: 600, cursor: "pointer" }}>{mode === "login" ? "Registrieren" : "Anmelden"}</span>
+      </p>
+    </Card>
+  </div>;
+}
+
+// ═══════════════════════════════════════════
+// DASHBOARD
+// ═══════════════════════════════════════════
+function DashboardPage({ user, setPage }) {
+  const [projects, setProjects] = useState(demoProjects);
+  const [activeProject, setActiveProject] = useState(null);
+  const [showNewProject, setShowNewProject] = useState(false);
+  const [showAnalyze, setShowAnalyze] = useState(false);
+  const [showEditor, setShowEditor] = useState(false);
+  const [view, setView] = useState("overview");
+  const [npName, setNpName] = useState(""); const [npCat, setNpCat] = useState("Steuern");
+  const [analyzeText, setAnalyzeText] = useState(""); const [analyzeResult, setAnalyzeResult] = useState(null); const [analyzing, setAnalyzing] = useState(false);
+  const [fileData, setFileData] = useState(null);
+  const [editorIntent, setEditorIntent] = useState(""); const [editorTone, setEditorTone] = useState("sachlich"); const [editorResult, setEditorResult] = useState(""); const [editorLoading, setEditorLoading] = useState(false);
+
+  const handleAnalyze = async () => {
+    if (!analyzeText.trim() && !fileData) return;
+    setAnalyzing(true);
+    const result = await analyzeWithAI(analyzeText, fileData);
+    setAnalyzeResult(result);
+    setAnalyzing(false);
+  };
+
+  const handleGenerateLetter = async () => {
+    if (!editorIntent.trim()) return;
+    setEditorLoading(true);
+    try {
+      const context = activeProject ? `Projekt: ${activeProject.name}, Behörde: ${activeProject.behoerde}` : "Allgemein";
+      const resp = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: 1000,
+          system: `Du bist KlarBrief und erstellst formelle Briefe (DIN 5008). Ton: ${editorTone}. Kontext: ${context}. Vollständiger Brief mit Absender, Empfänger, Betreff, Anrede, Text, Grußformel. Nur Brieftext, kein JSON, kein Markdown.`,
+          messages: [{ role: "user", content: `Brief erstellen: ${editorIntent}` }] })
+      });
+      const data = await resp.json();
+      setEditorResult(data.content?.[0]?.text || "Brief konnte nicht generiert werden.");
+    } catch { setEditorResult(`${user?.name}\nKiefernweg 1\n53474 Bad Neuenahr-Ahrweiler\n\n${activeProject?.behoerde || "Empfänger"}\n\nDatum: ${new Date().toLocaleDateString("de-DE")}\n\nBetreff: ${editorIntent}\n\nSehr geehrte Damen und Herren,\n\nhiermit möchte ich ${editorIntent.toLowerCase()}.\n\nMit freundlichen Grüßen\n${user?.name}`); }
+    setEditorLoading(false);
+  };
+
+  const createProject = () => {
+    if (!npName) return;
+    const np = { id: Date.now(), name: npName, category: npCat, status: "offen", ampel: "gruen", behoerde: "Noch nicht zugeordnet", frist: null, letters: [] };
+    setProjects([np, ...projects]); setNpName(""); setShowNewProject(false); setActiveProject(np); setView("project");
+  };
+
+  const addLetterToProject = () => {
+    if (!analyzeResult || !activeProject) return;
+    const nl = { id: Date.now(), date: new Date().toLocaleDateString("de-DE"), direction: "eingehend", type: analyzeResult.kategorie, summary: analyzeResult.klartext, analyzed: true };
+    const up = projects.map(p => p.id === activeProject.id ? { ...p, letters: [...p.letters, nl], ampel: analyzeResult.ampel, frist: analyzeResult.frist, behoerde: analyzeResult.behoerde || p.behoerde } : p);
+    setProjects(up); setActiveProject({ ...activeProject, letters: [...activeProject.letters, nl], ampel: analyzeResult.ampel });
+    setShowAnalyze(false); setAnalyzeText(""); setAnalyzeResult(null); setFileData(null);
+  };
+
+  if (view === "overview") return <div style={{ padding: "32px 20px", maxWidth: 1200, margin: "0 auto" }}>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 32 }}>
+      <div><h1 style={{ fontSize: 28, fontWeight: 800, color: brand.text, margin: 0 }}>Hallo, {user?.name} 👋</h1><p style={{ fontSize: 15, color: brand.textMuted, margin: "4px 0 0" }}>Dein Briefverkehr auf einen Blick</p></div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <Btn size="sm" onClick={() => setShowAnalyze(true)}><Camera size={16} /> Brief scannen</Btn>
+        <Btn size="sm" variant="outline" onClick={() => setShowNewProject(true)}><Plus size={16} /> Neues Projekt</Btn>
+      </div>
+    </div>
+    <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 32 }}>
+      <StatCard icon={Folder} label="Offene Projekte" value={projects.filter(p => p.status !== "erledigt").length} color={brand.primary} />
+      <StatCard icon={AlertTriangle} label="Dringend" value={projects.filter(p => p.ampel === "rot").length} color={brand.danger} />
+      <StatCard icon={FileText} label="Briefe gesamt" value={projects.reduce((s, p) => s + p.letters.length, 0)} color={brand.info} />
+      <StatCard icon={Clock} label="Nächste Frist" value={projects.filter(p => p.frist).sort((a, b) => new Date(a.frist) - new Date(b.frist))[0]?.frist?.split("-").reverse().join(".") || "—"} color={brand.warning} />
+    </div>
+    {projects.some(p => p.ampel === "rot" && p.frist) && <div style={{ padding: 16, borderRadius: 12, background: `${brand.danger}08`, border: `1px solid ${brand.danger}30`, marginBottom: 24, display: "flex", alignItems: "center", gap: 12 }}><AlertTriangle size={20} style={{ color: brand.danger }} /><span style={{ fontSize: 14, color: brand.danger, fontWeight: 600 }}>Achtung: {projects.filter(p => p.ampel === "rot").length} Projekt(e) mit dringendem Handlungsbedarf!</span></div>}
+    <h2 style={{ fontSize: 20, fontWeight: 700, color: brand.text, marginBottom: 16 }}>Deine Projekte</h2>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16 }}>
+      {projects.map(p => (
+        <Card key={p.id} hover onClick={() => { setActiveProject(p); setView("project"); }} style={{ cursor: "pointer" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}><AmpelBadge level={p.ampel} /><Badge color={brand.textMuted} bg={brand.bgMuted}>{p.category}</Badge></div>
+          <h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, margin: "0 0 6px" }}>{p.name}</h3>
+          <p style={{ fontSize: 13, color: brand.textMuted, margin: "0 0 12px" }}>{p.behoerde}</p>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: brand.textMuted }}><span>{p.letters.length} Brief(e)</span>{p.frist && <span style={{ color: brand.danger, fontWeight: 600 }}>Frist: {p.frist.split("-").reverse().join(".")}</span>}</div>
+        </Card>
+      ))}
+    </div>
+    <Modal open={showNewProject} onClose={() => setShowNewProject(false)} title="Neues Projekt">
+      <Input label="Projektname" value={npName} onChange={setNpName} placeholder="z.B. Steuerbescheid 2025" icon={Folder} />
+      <div style={{ marginBottom: 16 }}><label style={{ display: "block", marginBottom: 6, fontSize: 14, fontWeight: 600, color: brand.text }}>Kategorie</label><div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>{["Steuern","Miete","Soziales","Bußgeld","Versicherung","Arbeit","Sonstiges"].map(c => <button key={c} onClick={() => setNpCat(c)} style={{ padding: "8px 16px", borderRadius: 8, border: `1.5px solid ${npCat === c ? brand.primary : brand.borderLight}`, background: npCat === c ? brand.bgMuted : "#fff", color: npCat === c ? brand.primary : brand.textMuted, fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{c}</button>)}</div></div>
+      <Btn onClick={createProject} style={{ width: "100%" }}>Projekt erstellen</Btn>
+    </Modal>
+    <Modal open={showAnalyze} onClose={() => { setShowAnalyze(false); setAnalyzeText(""); setAnalyzeResult(null); setFileData(null); }} title="Brief analysieren" wide>
+      <FileUploader onFileContent={(data) => setFileData(data)} onTextContent={(text) => setAnalyzeText(text)} />
+      <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "8px 0 16px" }}><div style={{ flex: 1, height: 1, background: brand.borderLight }} /><span style={{ fontSize: 13, color: brand.textMuted }}>oder Text eingeben</span><div style={{ flex: 1, height: 1, background: brand.borderLight }} /></div>
+      <Input label="" textarea value={analyzeText} onChange={setAnalyzeText} placeholder="Text des Behördenbriefs..." icon={FileText} />
+      <Btn onClick={handleAnalyze} style={{ width: "100%" }}>{analyzing ? <><RefreshCw size={16} style={{ animation: "spin 1s linear infinite" }} /> Analysiere...</> : <><Zap size={16} /> Analysieren</>}</Btn>
+      {analyzeResult && <div style={{ marginTop: 20 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}><AmpelBadge level={analyzeResult.ampel} /><Badge>{analyzeResult.kategorie}</Badge>{analyzeResult.frist && <Badge color={brand.danger} bg={`${brand.danger}10`}>Frist: {analyzeResult.frist}</Badge>}</div>
+        <div style={{ padding: 16, background: brand.bgMuted, borderRadius: 10, marginBottom: 12 }}><p style={{ margin: 0, fontSize: 15, lineHeight: 1.7 }}>{analyzeResult.klartext}</p></div>
+        {analyzeResult.todos?.map((t, i) => <div key={i} style={{ display: "flex", gap: 8, padding: "6px 0", fontSize: 14, color: brand.text }}><CheckCircle size={16} style={{ color: brand.success, flexShrink: 0 }} />{t}</div>)}
+        {activeProject ? <Btn onClick={addLetterToProject} variant="accent" style={{ width: "100%", marginTop: 16 }}>Zu "{activeProject.name}" hinzufügen</Btn> : <p style={{ fontSize: 13, color: brand.textMuted, marginTop: 12 }}>Öffne ein Projekt um den Brief zuzuordnen.</p>}
+      </div>}
+    </Modal>
+  </div>;
+
+  if (view === "project" && activeProject) return <div style={{ padding: "32px 20px", maxWidth: 1000, margin: "0 auto" }}>
+    <button onClick={() => { setView("overview"); setActiveProject(null); }} style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer", color: brand.primary, fontWeight: 600, fontSize: 14, padding: 0, marginBottom: 24, fontFamily: "inherit" }}><ArrowLeft size={16} /> Zurück</button>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 32 }}>
+      <div><div style={{ display: "flex", gap: 10, marginBottom: 8 }}><AmpelBadge level={activeProject.ampel} /><Badge>{activeProject.category}</Badge></div><h1 style={{ fontSize: 28, fontWeight: 800, color: brand.text, margin: "0 0 4px" }}>{activeProject.name}</h1><p style={{ fontSize: 14, color: brand.textMuted, margin: 0 }}>{activeProject.behoerde}</p></div>
+      <div style={{ display: "flex", gap: 10 }}><Btn size="sm" onClick={() => setShowAnalyze(true)}><Camera size={14} /> Brief hinzufügen</Btn><Btn size="sm" variant="accent" onClick={() => setShowEditor(true)}><Edit3 size={14} /> Antwort schreiben</Btn></div>
+    </div>
+    {activeProject.frist && <div style={{ padding: 16, borderRadius: 12, background: `${brand.danger}08`, border: `1px solid ${brand.danger}20`, marginBottom: 24, display: "flex", alignItems: "center", gap: 12 }}><Clock size={18} style={{ color: brand.danger }} /><span style={{ fontSize: 14, fontWeight: 600, color: brand.danger }}>Frist: {activeProject.frist.split("-").reverse().join(".")} — {Math.max(0, Math.ceil((new Date(activeProject.frist) - new Date()) / 86400000))} Tage</span></div>}
+    <h2 style={{ fontSize: 20, fontWeight: 700, color: brand.text, marginBottom: 20 }}>Schriftverkehr</h2>
+    <div style={{ position: "relative", paddingLeft: 32 }}>
+      <div style={{ position: "absolute", left: 11, top: 0, bottom: 0, width: 2, background: brand.borderLight }} />
+      {activeProject.letters.map((l) => (
+        <div key={l.id} style={{ position: "relative", marginBottom: 20 }}>
+          <div style={{ position: "absolute", left: -32, top: 4, width: 24, height: 24, borderRadius: "50%", background: l.direction === "eingehend" ? brand.info : brand.success, display: "flex", alignItems: "center", justifyContent: "center" }}>{l.direction === "eingehend" ? <Download size={12} color="#fff" /> : <Send size={12} color="#fff" />}</div>
+          <Card>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}><Badge color={l.direction === "eingehend" ? brand.info : brand.success} bg={l.direction === "eingehend" ? `${brand.info}15` : `${brand.success}15`}>{l.direction === "eingehend" ? "Eingehend" : "Ausgehend"}</Badge><span style={{ fontSize: 13, color: brand.textMuted }}>{l.date}</span></div>
+            <h4 style={{ fontSize: 16, fontWeight: 700, color: brand.text, margin: "0 0 6px" }}>{l.type}</h4>
+            <p style={{ fontSize: 14, color: brand.textMuted, lineHeight: 1.6, margin: 0 }}>{l.summary}</p>
+          </Card>
+        </div>
+      ))}
+    </div>
+    {activeProject.letters.length === 0 && <Card style={{ textAlign: "center", padding: 40 }}><Camera size={40} style={{ color: brand.borderLight, marginBottom: 12 }} /><p style={{ color: brand.textMuted, margin: 0 }}>Noch keine Briefe. Fotografiere oder lade den ersten Brief hoch!</p></Card>}
+    <Modal open={showEditor} onClose={() => { setShowEditor(false); setEditorResult(""); setEditorIntent(""); }} title="Antwortbrief erstellen" wide>
+      <Input label="Was möchtest du?" textarea value={editorIntent} onChange={setEditorIntent} placeholder="z.B. Ich will Widerspruch einlegen..." />
+      <div style={{ marginBottom: 16 }}><label style={{ display: "block", marginBottom: 6, fontSize: 14, fontWeight: 600 }}>Ton</label><div style={{ display: "flex", gap: 8 }}>{["sachlich","fordernd","freundlich"].map(t => <button key={t} onClick={() => setEditorTone(t)} style={{ padding: "8px 16px", borderRadius: 8, border: `1.5px solid ${editorTone === t ? brand.primary : brand.borderLight}`, background: editorTone === t ? brand.bgMuted : "#fff", color: editorTone === t ? brand.primary : brand.textMuted, fontWeight: 600, fontSize: 13, cursor: "pointer", textTransform: "capitalize", fontFamily: "inherit" }}>{t}</button>)}</div></div>
+      <Btn onClick={handleGenerateLetter} style={{ width: "100%" }}>{editorLoading ? <><RefreshCw size={16} style={{ animation: "spin 1s linear infinite" }} /> Generiere...</> : <><Edit3 size={16} /> Brief generieren</>}</Btn>
+      {editorResult && <div style={{ marginTop: 20 }}><div style={{ padding: 24, background: "#fff", border: `1px solid ${brand.borderLight}`, borderRadius: 8, fontFamily: "Georgia, serif", fontSize: 14, lineHeight: 1.8, whiteSpace: "pre-wrap" }}>{editorResult}</div><div style={{ display: "flex", gap: 10, marginTop: 16 }}><Btn variant="accent" onClick={() => window.print()}><Printer size={14} /> Drucken</Btn><Btn variant="outline" onClick={() => { const b = new Blob([editorResult], { type: "text/plain" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = "Antwortbrief.txt"; a.click(); }}><Download size={14} /> Download</Btn></div></div>}
+    </Modal>
+    <Modal open={showAnalyze} onClose={() => { setShowAnalyze(false); setAnalyzeText(""); setAnalyzeResult(null); setFileData(null); }} title="Brief hinzufügen" wide>
+      <FileUploader onFileContent={(data) => setFileData(data)} onTextContent={(text) => setAnalyzeText(text)} />
+      <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "8px 0 16px" }}><div style={{ flex: 1, height: 1, background: brand.borderLight }} /><span style={{ fontSize: 13, color: brand.textMuted }}>oder Text</span><div style={{ flex: 1, height: 1, background: brand.borderLight }} /></div>
+      <Input textarea value={analyzeText} onChange={setAnalyzeText} placeholder="Brief-Text..." icon={FileText} />
+      <Btn onClick={handleAnalyze} style={{ width: "100%" }}>{analyzing ? <><RefreshCw size={16} style={{ animation: "spin 1s linear infinite" }} /> Analysiere...</> : <><Zap size={16} /> Analysieren</>}</Btn>
+      {analyzeResult && <div style={{ marginTop: 20 }}><div style={{ display: "flex", gap: 8, marginBottom: 12 }}><AmpelBadge level={analyzeResult.ampel} /></div><div style={{ padding: 16, background: brand.bgMuted, borderRadius: 10, marginBottom: 12 }}><p style={{ margin: 0, fontSize: 15, lineHeight: 1.7 }}>{analyzeResult.klartext}</p></div><Btn onClick={addLetterToProject} variant="accent" style={{ width: "100%", marginTop: 12 }}>Zum Projekt hinzufügen</Btn></div>}
+    </Modal>
+  </div>;
+}
+
+// ═══════════════════════════════════════════
+// ADMIN
+// ═══════════════════════════════════════════
+function AdminPage() {
+  const [tab, setTab] = useState("overview");
+  const [searchTerm, setSearchTerm] = useState("");
+  const filtered = demoUsers.filter(u => u.name.toLowerCase().includes(searchTerm.toLowerCase()) || u.email.toLowerCase().includes(searchTerm.toLowerCase()));
+  return <div style={{ padding: "32px 20px", maxWidth: 1200, margin: "0 auto" }}>
+    <div style={{ marginBottom: 32 }}><h1 style={{ fontSize: 28, fontWeight: 800, color: brand.text, margin: "0 0 4px" }}>Admin-Dashboard</h1><p style={{ fontSize: 15, color: brand.textMuted, margin: 0 }}>Übersicht und Verwaltung</p></div>
+    <div style={{ display: "flex", gap: 4, marginBottom: 32, overflowX: "auto" }}>
+      {[["overview","Übersicht"],["users","Nutzer"],["system","System"]].map(([id, l]) => <button key={id} onClick={() => setTab(id)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: tab === id ? brand.primary : "transparent", color: tab === id ? "#fff" : brand.textMuted, fontWeight: 600, fontSize: 14, cursor: "pointer", whiteSpace: "nowrap", fontFamily: "inherit" }}>{l}</button>)}
+    </div>
+    {tab === "overview" && <>
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 32 }}>
+        <StatCard icon={Users} label="Gesamtnutzer" value="12.847" change={14} color={brand.primary} />
+        <StatCard icon={TrendingUp} label="MRR" value="32.450€" change={22} color={brand.success} />
+        <StatCard icon={Activity} label="Analysen heute" value="1.293" change={8} color={brand.info} />
+        <StatCard icon={Target} label="Conversion" value="5.2%" change={3} color={brand.accent} />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 24 }}>
+        <Card><h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>Abo-Verteilung</h3><div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 16 }}>{[["Free",8240,64],["Plus",3420,27],["Pro",987,8],["Business",200,1]].map(([n,c,p]) => <div key={n}><div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, marginBottom: 4 }}><span style={{ fontWeight: 600, color: brand.text }}>{n}</span><span style={{ color: brand.textMuted }}>{c.toLocaleString()} ({p}%)</span></div><div style={{ height: 8, borderRadius: 4, background: brand.borderLight }}><div style={{ height: "100%", borderRadius: 4, background: brand.primary, width: `${p}%` }} /></div></div>)}</div></Card>
+        <Card><h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>Upload-Methoden</h3><div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 16 }}>{[["📸 Foto/Kamera",45],["📄 PDF Upload",32],["📝 Text-Eingabe",18],["📂 Drag & Drop",5]].map(([n,p]) => <div key={n}><div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, marginBottom: 4 }}><span style={{ fontWeight: 600, color: brand.text }}>{n}</span><span style={{ color: brand.textMuted }}>{p}%</span></div><div style={{ height: 8, borderRadius: 4, background: brand.borderLight }}><div style={{ height: "100%", borderRadius: 4, background: brand.accent, width: `${p}%` }} /></div></div>)}</div></Card>
+        <Card><h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>Letzte Aktivität</h3><div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16 }}>{[{t:"2 Min.",a:"Foto analysiert",d:"Steuerbescheid"},{t:"8 Min.",a:"PDF Upload",d:"Nebenkostenabrechnung"},{t:"15 Min.",a:"Registrierung",d:"kerem@gmail.com"},{t:"23 Min.",a:"Brief erstellt",d:"Widerspruch"},{t:"31 Min.",a:"Upgrade→Plus",d:"lisa.b@outlook.de"}].map((a,i) => <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: `1px solid ${brand.borderLight}` }}><span style={{ fontSize: 12, color: brand.textMuted, width: 60, flexShrink: 0 }}>{a.t}</span><div><div style={{ fontSize: 14, fontWeight: 600, color: brand.text }}>{a.a}</div><div style={{ fontSize: 12, color: brand.textMuted }}>{a.d}</div></div></div>)}</div></Card>
+      </div>
+    </>}
+    {tab === "users" && <>
+      <Card style={{ marginBottom: 24 }}><div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}><Input value={searchTerm} onChange={setSearchTerm} placeholder="Nutzer suchen..." icon={Search} style={{ flex: 1, minWidth: 200, marginBottom: 0 }} /><Btn variant="outline" size="sm"><Filter size={14} /> Filter</Btn><Btn variant="outline" size="sm"><Download size={14} /> Export</Btn></div></Card>
+      <Card style={{ padding: 0, overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}><thead><tr style={{ background: brand.bgMuted }}>{["Name","E-Mail","Plan","Projekte","Analysen","Login",""].map(h => <th key={h} style={{ padding: "14px 16px", textAlign: "left", fontWeight: 700, color: brand.text, borderBottom: `2px solid ${brand.borderLight}` }}>{h}</th>)}</tr></thead><tbody>{filtered.map(u => <tr key={u.id} style={{ borderBottom: `1px solid ${brand.borderLight}` }}><td style={{ padding: "14px 16px", fontWeight: 600 }}>{u.name}</td><td style={{ padding: "14px 16px", color: brand.textMuted }}>{u.email}</td><td style={{ padding: "14px 16px" }}><Badge color={u.plan === "pro" ? brand.accent : u.plan === "plus" ? brand.primary : brand.textMuted} bg={u.plan === "pro" ? `${brand.accent}15` : u.plan === "plus" ? brand.bgMuted : `${brand.textMuted}10`}>{u.plan.toUpperCase()}</Badge></td><td style={{ padding: "14px 16px" }}>{u.projects}</td><td style={{ padding: "14px 16px" }}>{u.analyses}</td><td style={{ padding: "14px 16px", color: brand.textMuted }}>{u.lastLogin}</td><td style={{ padding: "14px 16px" }}><div style={{ display: "flex", gap: 8 }}><button style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Eye size={16} color={brand.textMuted} /></button><button style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Trash2 size={16} color={brand.danger} /></button></div></td></tr>)}</tbody></table></div></Card>
+    </>}
+    {tab === "system" && <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 24 }}>
+      <Card><h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>API-Kosten</h3><div style={{ fontSize: 32, fontWeight: 800, color: brand.primary, margin: "12px 0" }}>847,50€</div><p style={{ fontSize: 14, color: brand.textMuted, margin: 0 }}>Aktueller Monat · ∅ 0,066€/Analyse</p></Card>
+      <Card><h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>System-Status</h3><div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>{[["API","Online"],["DB","Online"],["Payments","Online"],["Vision OCR","Online"]].map(([s,st]) => <div key={s} style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}><span style={{ fontWeight: 600 }}>{s}</span><span style={{ display: "flex", alignItems: "center", gap: 6, color: brand.success, fontWeight: 600 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: brand.success }} />{st}</span></div>)}</div></Card>
+      <Card><h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>Performance</h3><div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>{[["Ø Analysezeit","2.3s"],["Ø OCR-Zeit","1.8s"],["Uptime","99.97%"],["Fehlerrate","0.02%"]].map(([l,v]) => <div key={l} style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}><span style={{ color: brand.textMuted }}>{l}</span><span style={{ fontWeight: 700 }}>{v}</span></div>)}</div></Card>
+    </div>}
+  </div>;
+}
+
+// ═══════════════════════════════════════════
+// LEGAL PAGES
+// ═══════════════════════════════════════════
+function LegalPage({ page }) {
+  const W = ({ children }) => <div style={{ padding: "60px 20px", maxWidth: 800, margin: "0 auto" }}><article style={{ fontSize: 15, color: brand.text, lineHeight: 1.8 }}>{children}</article></div>;
+  const H1 = ({ children }) => <h1 style={{ fontSize: 36, fontWeight: 800, marginBottom: 32 }}>{children}</h1>;
+  const H2 = ({ children }) => <h2 style={{ fontSize: 22, fontWeight: 700, marginTop: 32, marginBottom: 12 }}>{children}</h2>;
+  const P = ({ children }) => <p style={{ marginBottom: 12 }}>{children}</p>;
+
+  if (page === "impressum") return <W><H1>Impressum</H1>
+    <H2>Angaben gemäß § 5 TMG</H2><P><strong>Anbieter</strong><br/>KlarBrief – eine Marke der ETONI UG (haftungsbeschränkt)<br/>Kiefernweg 1<br/>53474 Bad Neuenahr-Ahrweiler<br/>Deutschland</P>
+    <H2>Kontakt</H2><P>E-Mail: info@csv-support.de<br/>Web: www.csv-support.de</P>
+    <H2>Handelsregister</H2><P>Registergericht: Amtsgericht Koblenz<br/>Registernummer: HRB 31805</P>
+    <H2>Vertreten durch</H2><P>Geschäftsführer: Toni Krell</P>
+    <H2>Umsatzsteuer</H2><P>Umsatzsteuer-Identifikationsnummer gemäß § 27a UStG wird nach Zuteilung ergänzt.</P>
+    <H2>Verantwortlich für den Inhalt nach § 18 Abs. 2 MStV</H2><P>ETONI UG (haftungsbeschränkt)<br/>Kiefernweg 1<br/>53474 Bad Neuenahr-Ahrweiler</P>
+    <H2>EU-Streitschlichtung</H2><P>Plattform der EU: <a href="https://ec.europa.eu/consumers/odr" style={{ color: brand.primary }}>https://ec.europa.eu/consumers/odr</a>. Wir sind nicht bereit oder verpflichtet, an Streitbeilegungsverfahren vor einer Verbraucherschlichtungsstelle teilzunehmen.</P>
+    <H2>Haftung für Inhalte</H2><P>Als Diensteanbieter sind wir gemäß § 7 Abs. 1 TMG für eigene Inhalte verantwortlich. Nach §§ 8 bis 10 TMG sind wir nicht verpflichtet, fremde Informationen zu überwachen.</P>
+    <H2>Haftung für Links</H2><P>Für Inhalte verlinkter Seiten ist stets der jeweilige Anbieter verantwortlich.</P>
+    <H2>Urheberrecht</H2><P>Inhalte unterliegen dem deutschen Urheberrecht. Vervielfältigung bedarf der schriftlichen Zustimmung.</P>
+    <div style={{ marginTop: 40, padding: 20, background: brand.bgMuted, borderRadius: 12, textAlign: "center" }}><p style={{ fontSize: 14, color: brand.textMuted, margin: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}><Heart size={16} style={{ color: brand.accent }} /> Mit Herz aus dem Ahrtal — <a href="https://csv-support.de" style={{ color: brand.primary }}>csv-support.de</a></p></div>
+    <P><em>Stand: März 2026</em></P>
+  </W>;
+
+  if (page === "datenschutz") return <W><H1>Datenschutzerklärung</H1>
+    <H2>1. Verantwortlicher</H2><P>ETONI UG (haftungsbeschränkt), Kiefernweg 1, 53474 Bad Neuenahr-Ahrweiler, info@csv-support.de</P>
+    <H2>2. Datenverarbeitung</H2><P>Wir verarbeiten personenbezogene Daten nur zur Bereitstellung unserer Dienste oder mit Einwilligung.</P>
+    <H2>3. Zwecke und Rechtsgrundlagen</H2><P><strong>Vertragserfüllung (Art. 6 Abs. 1 lit. b DSGVO):</strong> Account-Daten, hochgeladene Briefe und Fotos, generierte Schreiben, Zahlungsdaten.</P><P><strong>Berechtigtes Interesse (Art. 6 Abs. 1 lit. f):</strong> Fehleranalyse, Missbrauchsprävention.</P><P><strong>Einwilligung (Art. 6 Abs. 1 lit. a):</strong> Analyse-Cookies, Newsletter.</P><P><strong>Rechtliche Verpflichtung (Art. 6 Abs. 1 lit. c):</strong> Rechnungsdaten (10 Jahre).</P>
+    <H2>4. Besonderer Hinweis: Foto-/PDF-Upload</H2><P>Hochgeladene Fotos und PDFs werden ausschließlich zur Texterkennung und Analyse verarbeitet. Die Verarbeitung erfolgt über die Anthropic Claude API (Vision). Bilder werden nicht dauerhaft auf Anthropic-Servern gespeichert. Die Übertragung ist durch TLS 1.3 verschlüsselt.</P>
+    <H2>5. Empfänger</H2><P>Anthropic (KI-Analyse/Vision, USA — EU-Standardvertragsklauseln), Stripe (Zahlungen), EU-Hosting.</P>
+    <H2>6. Speicherdauer</H2><P>Account-Daten: bis Löschung. Briefe/Fotos: bis Löschung durch Nutzer. Zahlungsdaten: 10 Jahre. Logs: 7 Tage.</P>
+    <H2>7. Cookies</H2><P>Technisch notwendige Cookies immer aktiv. Analyse/Marketing nur mit Einwilligung. Widerruf über "Cookie-Einstellungen" im Footer.</P>
+    <H2>8. Ihre Rechte</H2><P>Auskunft (Art. 15), Berichtigung (Art. 16), Löschung (Art. 17), Einschränkung (Art. 18), Datenübertragbarkeit (Art. 20), Widerspruch (Art. 21). Aufsichtsbehörde: LfDI Rheinland-Pfalz.</P>
+    <P><em>Stand: März 2026</em></P>
+  </W>;
+
+  if (page === "agb") return <W><H1>Allgemeine Geschäftsbedingungen</H1>
+    <H2>§ 1 Geltungsbereich</H2><P>Diese AGB gelten für „KlarBrief" der ETONI UG (haftungsbeschränkt), Kiefernweg 1, 53474 Bad Neuenahr-Ahrweiler.</P>
+    <H2>§ 2 Leistungsbeschreibung</H2><P>KlarBrief bietet KI-gestützte Analyse amtlicher Schreiben inkl. Foto-/PDF-Erkennung. Leistungsumfang variiert je nach Tarif.</P>
+    <H2>§ 3 Vertragsschluss</H2><P>Vertrag durch Registrierung. Bei Bezahl-Tarifen zusätzlich durch Zahlungsabschluss.</P>
+    <H2>§ 4 Preise und Zahlung</H2><P>Preise inkl. MwSt. Zahlung über Stripe.</P>
+    <H2>§ 5 Kündigung</H2><P>Monatsabos jederzeit zum Monatsende kündbar. Jahresabos verlängern sich automatisch (30 Tage Kündigungsfrist).</P>
+    <H2>§ 6 Haftung</H2><P><strong>KlarBrief ist keine Rechtsberatung.</strong> Keine Haftung für inhaltliche Richtigkeit der KI-Analysen. Bei komplexen Rechtsfragen wird ein Anwalt empfohlen.</P>
+    <H2>§ 7 Datenschutz</H2><P>Siehe Datenschutzerklärung unter /datenschutz.</P>
+    <H2>§ 8 Schlussbestimmungen</H2><P>Deutsches Recht. Salvatorische Klausel.</P>
+    <P><em>Stand: März 2026</em></P>
+  </W>;
+
+  if (page === "widerruf") return <W><H1>Widerrufsbelehrung</H1>
+    <H2>Widerrufsrecht</H2><P>14 Tage Widerrufsfrist ab Vertragsschluss ohne Angabe von Gründen.</P><P>An: ETONI UG (haftungsbeschränkt), Kiefernweg 1, 53474 Bad Neuenahr-Ahrweiler, info@csv-support.de</P>
+    <H2>Folgen des Widerrufs</H2><P>Rückzahlung aller Zahlungen innerhalb von 14 Tagen nach Widerruf.</P>
+    <H2>Muster-Widerrufsformular</H2>
+    <div style={{ padding: 20, background: brand.bgMuted, borderRadius: 12 }}><P>An: ETONI UG, Kiefernweg 1, 53474 Bad Neuenahr-Ahrweiler</P><P>Hiermit widerrufe ich den Vertrag über: KlarBrief [Tarif]</P><P>Bestellt am: ___ / Name: ___ / Anschrift: ___ / Datum: ___</P></div>
+    <P><em>Stand: März 2026</em></P>
+  </W>;
+  return null;
+}
+
+// ═══════════════════════════════════════════
+// MAIN APP
+// ═══════════════════════════════════════════
+export default function App() {
+  const [page, setPage] = useState("home");
+  const [user, setUser] = useState(null);
+  const [showCookies, setShowCookies] = useState(true);
+  const isLoggedIn = !!user;
+  const isAdmin = user?.isAdmin;
+  useEffect(() => { window.scrollTo({ top: 0, behavior: "smooth" }); }, [page]);
+
+  const renderPage = () => {
+    switch (page) {
+      case "home": return <HomePage setPage={setPage} />;
+      case "features": return <FeaturesPage />;
+      case "usecases": return <UseCasesPage setPage={setPage} />;
+      case "pricing": return <PricingPage setPage={setPage} />;
+      case "blog": return <BlogPage />;
+      case "about": return <AboutPage />;
+      case "login": return <AuthPage mode="login" setPage={setPage} onLogin={setUser} />;
+      case "register": return <AuthPage mode="register" setPage={setPage} onLogin={setUser} />;
+      case "dashboard": return isLoggedIn ? <DashboardPage user={user} setPage={setPage} /> : <AuthPage mode="login" setPage={setPage} onLogin={setUser} />;
+      case "admin": return isLoggedIn && isAdmin ? <AdminPage /> : <AuthPage mode="login" setPage={setPage} onLogin={setUser} />;
+      case "impressum": case "datenschutz": case "agb": case "widerruf": return <LegalPage page={page} />;
+      default: return <HomePage setPage={setPage} />;
+    }
+  };
+
+  return <div style={{ fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif", minHeight: "100vh", background: page === "login" || page === "register" ? brand.bgMuted : brand.bg, color: brand.text }}>
+    <style>{`
+      @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800;1,9..40,400&display=swap');
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html { scroll-behavior: smooth; }
+      body { background: ${brand.bg}; }
+      ::selection { background: ${brand.primary}25; color: ${brand.primary}; }
+      a { color: ${brand.primary}; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+      @keyframes modalIn { from { opacity: 0; transform: scale(0.95) translateY(10px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+      @media (max-width: 768px) { .nav-desktop { display: none !important; } .nav-mobile-btn { display: block !important; } }
+      @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
+      @media print { nav, footer, button, .no-print { display: none !important; } }
+    `}</style>
+    <Navbar page={page} setPage={setPage} isLoggedIn={isLoggedIn} isAdmin={isAdmin} onLogout={() => { setUser(null); setPage("home"); }} />
+    {renderPage()}
+    {!["login","register"].includes(page) && <Footer setPage={setPage} />}
+    {showCookies && <CookieBanner onAccept={() => setShowCookies(false)} />}
+  </div>;
+}

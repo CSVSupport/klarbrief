@@ -1062,16 +1062,147 @@ function AboutPage() {
 // ═══════════════════════════════════════════
 // AUTH
 // ═══════════════════════════════════════════
+// TOTP 2FA UTILITIES
+// ═══════════════════════════════════════════
+const BASE32_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+function generateSecret(len = 20) {
+  const bytes = new Uint8Array(len);
+  crypto.getRandomValues(bytes);
+  let secret = "";
+  for (let i = 0; i < bytes.length; i++) secret += BASE32_CHARS[bytes[i] % 32];
+  return secret;
+}
+function base32Decode(str) {
+  str = str.replace(/=+$/, "").toUpperCase();
+  let bits = "", bytes = [];
+  for (const c of str) { const v = BASE32_CHARS.indexOf(c); if (v === -1) continue; bits += v.toString(2).padStart(5, "0"); }
+  for (let i = 0; i + 8 <= bits.length; i += 8) bytes.push(parseInt(bits.substring(i, i + 8), 2));
+  return new Uint8Array(bytes);
+}
+async function generateTOTP(secret, timeStep = 30) {
+  const epoch = Math.floor(Date.now() / 1000);
+  const counter = Math.floor(epoch / timeStep);
+  const counterBytes = new Uint8Array(8);
+  let tmp = counter;
+  for (let i = 7; i >= 0; i--) { counterBytes[i] = tmp & 0xff; tmp >>= 8; }
+  const keyData = base32Decode(secret);
+  const key = await crypto.subtle.importKey("raw", keyData, { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, counterBytes);
+  const hmac = new Uint8Array(sig);
+  const offset = hmac[hmac.length - 1] & 0x0f;
+  const code = ((hmac[offset] & 0x7f) << 24 | hmac[offset + 1] << 16 | hmac[offset + 2] << 8 | hmac[offset + 3]) % 1000000;
+  return code.toString().padStart(6, "0");
+}
+async function verifyTOTP(secret, inputCode) {
+  // Check current and ±1 time window for clock drift
+  for (const offset of [-1, 0, 1]) {
+    const epoch = Math.floor(Date.now() / 1000) + offset * 30;
+    const counter = Math.floor(epoch / 30);
+    const counterBytes = new Uint8Array(8);
+    let tmp = counter;
+    for (let i = 7; i >= 0; i--) { counterBytes[i] = tmp & 0xff; tmp >>= 8; }
+    const keyData = base32Decode(secret);
+    try {
+      const key = await crypto.subtle.importKey("raw", keyData, { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
+      const sig = await crypto.subtle.sign("HMAC", key, counterBytes);
+      const hmac = new Uint8Array(sig);
+      const off = hmac[hmac.length - 1] & 0x0f;
+      const code = ((hmac[off] & 0x7f) << 24 | hmac[off + 1] << 16 | hmac[off + 2] << 8 | hmac[off + 3]) % 1000000;
+      if (code.toString().padStart(6, "0") === inputCode) return true;
+    } catch { continue; }
+  }
+  return false;
+}
+function get2FAConfig(email) {
+  try { const s = localStorage.getItem(`kb_2fa_${email}`); return s ? JSON.parse(s) : null; } catch { return null; }
+}
+function save2FAConfig(email, config) {
+  localStorage.setItem(`kb_2fa_${email}`, JSON.stringify(config));
+}
+
+// ═══════════════════════════════════════════
+// AUTH with 2FA
+// ═══════════════════════════════════════════
 function AuthPage({ mode, setPage, onLogin }) {
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
   const [name, setName] = useState("");
+  const [step, setStep] = useState("credentials"); // credentials | 2fa
+  const [totpInput, setTotpInput] = useState("");
+  const [totpError, setTotpError] = useState("");
+  const [pendingUser, setPendingUser] = useState(null);
+
   const ADMIN_EMAIL = "admin@csv-support.de";
+
   const handleSubmit = () => {
-    if (mode === "register" && name && email && pass) { onLogin({ name, email, isAdmin: email.toLowerCase() === ADMIN_EMAIL }); setPage("dashboard"); }
-    if (mode === "login" && email && pass) { onLogin({ name: email.split("@")[0], email, isAdmin: email.toLowerCase() === ADMIN_EMAIL }); setPage("dashboard"); }
+    let userData;
+    if (mode === "register" && name && email && pass) {
+      userData = { name, email, isAdmin: email.toLowerCase() === ADMIN_EMAIL };
+    } else if (mode === "login" && email && pass) {
+      userData = { name: email.split("@")[0], email, isAdmin: email.toLowerCase() === ADMIN_EMAIL };
+    } else return;
+
+    // Check if 2FA is enabled for this user
+    const twoFA = get2FAConfig(email.toLowerCase());
+    if (mode === "login" && twoFA?.enabled) {
+      setPendingUser(userData);
+      setStep("2fa");
+      setTotpInput("");
+      setTotpError("");
+    } else {
+      onLogin(userData);
+      setPage("dashboard");
+    }
   };
-  const handleKeyDown = (e) => { if (e.key === "Enter") handleSubmit(); };
+
+  const handleVerify2FA = async () => {
+    if (!totpInput || totpInput.length !== 6) { setTotpError("Bitte 6-stelligen Code eingeben"); return; }
+    const twoFA = get2FAConfig(email.toLowerCase());
+    if (!twoFA?.secret) { setTotpError("2FA-Konfiguration nicht gefunden"); return; }
+    const valid = await verifyTOTP(twoFA.secret, totpInput);
+    if (valid) {
+      onLogin(pendingUser);
+      setPage("dashboard");
+    } else {
+      setTotpError("Ungültiger Code. Bitte erneut versuchen.");
+      setTotpInput("");
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter") {
+      if (step === "2fa") handleVerify2FA();
+      else handleSubmit();
+    }
+  };
+
+  // 2FA Verification Step
+  if (step === "2fa") return <div style={{ minHeight: "80vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "40px 20px", background: brand.bgMuted }}>
+    <Card style={{ maxWidth: 420, width: "100%", padding: 40 }}>
+      <div style={{ textAlign: "center", marginBottom: 32 }}>
+        <div style={{ width: 56, height: 56, borderRadius: 16, background: `linear-gradient(135deg, ${brand.primary}, ${brand.accent})`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}><Shield size={28} color="#fff" /></div>
+        <h1 style={{ fontSize: 24, fontWeight: 800, color: brand.text, margin: "0 0 4px" }}>Zwei-Faktor-Authentifizierung</h1>
+        <p style={{ fontSize: 14, color: brand.textMuted, margin: 0 }}>Gib den 6-stelligen Code aus deiner Authenticator-App ein</p>
+      </div>
+      <div onKeyDown={handleKeyDown}>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
+          <input value={totpInput} onChange={e => { const v = e.target.value.replace(/\D/g, "").slice(0, 6); setTotpInput(v); setTotpError(""); }}
+            placeholder="000000" maxLength={6} autoFocus
+            style={{ width: 200, textAlign: "center", fontSize: 32, fontWeight: 800, letterSpacing: "0.3em", padding: "14px 16px", borderRadius: 12, border: `2px solid ${totpError ? brand.danger : brand.borderLight}`, fontFamily: "'DM Sans', monospace", color: brand.text, outline: "none", transition: "border 0.2s" }}
+            onFocus={e => e.target.style.borderColor = totpError ? brand.danger : brand.primary}
+            onBlur={e => e.target.style.borderColor = totpError ? brand.danger : brand.borderLight} />
+        </div>
+        {totpError && <p style={{ textAlign: "center", color: brand.danger, fontSize: 13, fontWeight: 600, marginBottom: 12 }}>{totpError}</p>}
+      </div>
+      <Btn onClick={handleVerify2FA} style={{ width: "100%", marginBottom: 12 }}><Shield size={16} /> Verifizieren</Btn>
+      <button onClick={() => { setStep("credentials"); setTotpInput(""); setTotpError(""); setPendingUser(null); }}
+        style={{ width: "100%", padding: "10px 0", background: "none", border: "none", color: brand.textMuted, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+        ← Zurück zum Login
+      </button>
+    </Card>
+  </div>;
+
+  // Normal Login/Register
   return <div style={{ minHeight: "80vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "40px 20px", background: brand.bgMuted }}>
     <Card style={{ maxWidth: 440, width: "100%", padding: 40 }}>
       <div style={{ textAlign: "center", marginBottom: 32 }}>
@@ -1096,6 +1227,117 @@ function AuthPage({ mode, setPage, onLogin }) {
         <span onClick={() => setPage(mode === "login" ? "register" : "login")} style={{ color: brand.primary, fontWeight: 600, cursor: "pointer" }}>{mode === "login" ? "Registrieren" : "Anmelden"}</span>
       </p>
     </Card>
+  </div>;
+}
+
+// ═══════════════════════════════════════════
+// 2FA SETUP COMPONENT
+// ═══════════════════════════════════════════
+function TwoFactorSetup({ email }) {
+  const [config, setConfig] = useState(() => get2FAConfig(email));
+  const [setupStep, setSetupStep] = useState("idle"); // idle | setup | verify
+  const [secret, setSecret] = useState("");
+  const [verifyCode, setVerifyCode] = useState("");
+  const [error, setError] = useState("");
+
+  const isEnabled = config?.enabled;
+
+  const startSetup = () => {
+    const newSecret = generateSecret(20);
+    setSecret(newSecret);
+    setSetupStep("setup");
+    setVerifyCode("");
+    setError("");
+  };
+
+  const handleVerify = async () => {
+    if (verifyCode.length !== 6) { setError("Bitte 6-stelligen Code eingeben"); return; }
+    const valid = await verifyTOTP(secret, verifyCode);
+    if (valid) {
+      const newConfig = { enabled: true, secret, enabledAt: new Date().toISOString() };
+      save2FAConfig(email, newConfig);
+      setConfig(newConfig);
+      setSetupStep("idle");
+      setError("");
+      alert("2FA erfolgreich aktiviert! Ab dem nächsten Login wird der Code abgefragt.");
+    } else {
+      setError("Ungültiger Code. Bitte prüfe die Uhrzeit deines Geräts und versuche es erneut.");
+      setVerifyCode("");
+    }
+  };
+
+  const handleDisable = () => {
+    if (confirm("Zwei-Faktor-Authentifizierung wirklich deaktivieren? Dein Account ist dann weniger geschützt.")) {
+      save2FAConfig(email, { enabled: false });
+      setConfig({ enabled: false });
+      setSetupStep("idle");
+    }
+  };
+
+  const otpauthUrl = `otpauth://totp/KlarBrief:${encodeURIComponent(email)}?secret=${secret}&issuer=KlarBrief&digits=6&period=30`;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(otpauthUrl)}`;
+
+  if (isEnabled && setupStep === "idle") {
+    return <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: 14, borderRadius: 10, background: `${brand.success}08`, border: `1px solid ${brand.success}25`, marginBottom: 16 }}>
+        <Shield size={20} style={{ color: brand.success }} />
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: brand.success }}>2FA ist aktiviert</div>
+          <div style={{ fontSize: 12, color: brand.textMuted }}>Dein Account ist durch Zwei-Faktor-Authentifizierung geschützt</div>
+        </div>
+      </div>
+      <Btn variant="outline" size="sm" onClick={handleDisable}><Shield size={14} /> 2FA deaktivieren</Btn>
+    </div>;
+  }
+
+  if (setupStep === "setup") {
+    return <div>
+      <div style={{ padding: 20, borderRadius: 12, background: brand.bgMuted, marginBottom: 16 }}>
+        <h4 style={{ fontSize: 16, fontWeight: 700, color: brand.text, margin: "0 0 12px" }}>Schritt 1: Authenticator-App einrichten</h4>
+        <p style={{ fontSize: 14, color: brand.textMuted, lineHeight: 1.6, margin: "0 0 16px" }}>
+          Scanne den QR-Code mit deiner Authenticator-App (Google Authenticator, Authy, Microsoft Authenticator oder ähnliche).
+        </p>
+        <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-start" }}>
+          <div style={{ borderRadius: 12, overflow: "hidden", border: `1px solid ${brand.borderLight}`, background: "#fff", padding: 8 }}>
+            <img src={qrUrl} alt="2FA QR Code" width={180} height={180} style={{ display: "block" }} />
+          </div>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <p style={{ fontSize: 13, color: brand.textMuted, margin: "0 0 8px" }}>Oder gib diesen Schlüssel manuell ein:</p>
+            <div style={{ padding: "10px 14px", borderRadius: 8, background: "#fff", border: `1px solid ${brand.borderLight}`, fontFamily: "monospace", fontSize: 14, fontWeight: 700, letterSpacing: "0.15em", color: brand.text, wordBreak: "break-all", marginBottom: 8 }}>
+              {secret.match(/.{1,4}/g)?.join(" ")}
+            </div>
+            <button onClick={() => { navigator.clipboard?.writeText(secret); }} style={{ fontSize: 12, color: brand.primary, background: "none", border: "none", cursor: "pointer", fontWeight: 600, fontFamily: "inherit" }}>Schlüssel kopieren</button>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ padding: 20, borderRadius: 12, background: "#fff", border: `1px solid ${brand.borderLight}` }}>
+        <h4 style={{ fontSize: 16, fontWeight: 700, color: brand.text, margin: "0 0 8px" }}>Schritt 2: Code verifizieren</h4>
+        <p style={{ fontSize: 14, color: brand.textMuted, margin: "0 0 16px" }}>Gib den 6-stelligen Code aus deiner Authenticator-App ein:</p>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+          <input value={verifyCode} onChange={e => { setVerifyCode(e.target.value.replace(/\D/g, "").slice(0, 6)); setError(""); }}
+            onKeyDown={e => { if (e.key === "Enter") handleVerify(); }}
+            placeholder="000000" maxLength={6}
+            style={{ width: 160, textAlign: "center", fontSize: 24, fontWeight: 800, letterSpacing: "0.25em", padding: "12px 14px", borderRadius: 10, border: `2px solid ${error ? brand.danger : brand.borderLight}`, fontFamily: "'DM Sans', monospace", color: brand.text, outline: "none" }} />
+          <Btn onClick={handleVerify}>Aktivieren</Btn>
+        </div>
+        {error && <p style={{ color: brand.danger, fontSize: 13, fontWeight: 600, marginTop: 8 }}>{error}</p>}
+      </div>
+
+      <button onClick={() => setSetupStep("idle")} style={{ marginTop: 12, fontSize: 13, color: brand.textMuted, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }}>Abbrechen</button>
+    </div>;
+  }
+
+  // Not enabled, idle
+  return <div>
+    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: 14, borderRadius: 10, background: `${brand.warning}08`, border: `1px solid ${brand.warning}25`, marginBottom: 16 }}>
+      <AlertTriangle size={20} style={{ color: brand.warning }} />
+      <div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: brand.accentHover }}>2FA ist nicht aktiviert</div>
+        <div style={{ fontSize: 12, color: brand.textMuted }}>Aktiviere 2FA für zusätzliche Sicherheit</div>
+      </div>
+    </div>
+    <Btn size="sm" onClick={startSetup}><Shield size={14} /> 2FA jetzt einrichten</Btn>
   </div>;
 }
 
@@ -1392,6 +1634,12 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
           <span style={{ fontSize: 13, color: brand.accentHover }}>Zahlung ausstehend oder Abo nicht aktiv. Bitte Tarif erneut auswählen.</span>
         </div>
       )}
+    </Card>
+    {/* 2FA Setup */}
+    <Card style={{ marginBottom: 24 }}>
+      <h3 style={{ fontSize: 20, fontWeight: 700, color: brand.text, marginTop: 0, marginBottom: 4 }}>Zwei-Faktor-Authentifizierung (2FA)</h3>
+      <p style={{ fontSize: 14, color: brand.textMuted, marginBottom: 20 }}>Schütze deinen Account mit einem zusätzlichen Sicherheitscode beim Login.</p>
+      <TwoFactorSetup email={profile.email} />
     </Card>
     <Card>
       <h3 style={{ fontSize: 20, fontWeight: 700, color: brand.text, marginTop: 0, marginBottom: 16 }}>Datenschutz & Account</h3>

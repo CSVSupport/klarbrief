@@ -345,7 +345,8 @@ function Modal({ open, onClose, title, children, wide }) {
 // ── KI Analysis Engine ──
 async function analyzeWithAI(text, fileData = null) {
   const systemPrompt = `Du bist KlarBrief, ein KI-Assistent der Behördenbriefe in einfaches Deutsch übersetzt. Antworte IMMER als JSON-Objekt mit genau diesen Feldern:
-{"klartext": "Einfache Erklärung des Briefs in 2-3 Sätzen", "ampel": "rot/gelb/gruen", "todos": ["To-Do 1", "To-Do 2"], "frist": "Datum oder null", "kategorie": "Steuern/Miete/Soziales/Bußgeld/Versicherung/Arbeit/Sonstiges", "behoerde": "Name der Behörde/Absender"}
+{"klartext": "Einfache Erklärung des Briefs in 2-3 Sätzen", "ampel": "rot/gelb/gruen", "todos": ["To-Do 1", "To-Do 2"], "frist": "Datum oder null", "kategorie": "Steuern/Miete/Soziales/Bußgeld/Versicherung/Arbeit/Sonstiges", "behoerde": "Name der Behörde/Absender", "aktenzeichen": "Aktenzeichen, Geschäftszeichen, Steuernummer, Rechnungsnummer, Kundennummer, Vorgangsnummer, Kassenzeichen oder ähnliche Referenznummer aus dem Brief — oder null wenn nicht vorhanden", "referenzen": ["Liste aller im Brief gefundenen Referenznummern mit Bezeichnung, z.B. 'Aktenzeichen: 205/12345/2026', 'StNr: 123/456/78901', 'Rechnungsnr: RE-2026-4711'"]}
+WICHTIG: Suche IMMER nach Aktenzeichen, Geschäftszeichen, Steuernummern, Kassenzeichen, Rechnungsnummern, Kundennummern, Versicherungsnummern, Vertragsnummern oder sonstigen Referenznummern. Diese stehen oft oben rechts im Brief oder in der Betreffzeile. Das Feld "aktenzeichen" soll die WICHTIGSTE Referenznummer enthalten. Das Feld "referenzen" soll ALLE gefundenen Nummern enthalten.
 Keine Markdown-Formatierung, kein Präambel, nur das JSON-Objekt.`;
 
   let messages;
@@ -372,7 +373,7 @@ Keine Markdown-Formatierung, kein Präambel, nur das JSON-Objekt.`;
     const raw = data.content?.[0]?.text || "{}";
     return JSON.parse(raw.replace(/```json|```/g, "").trim());
   } catch {
-    return { klartext: "Der Brief wurde analysiert. Es handelt sich um ein amtliches Schreiben. Bitte prüfe die Details manuell.", ampel: "gelb", todos: ["Brief im Detail prüfen", "Fristen beachten"], frist: null, kategorie: "Sonstiges", behoerde: "Behörde" };
+    return { klartext: "Der Brief wurde analysiert. Es handelt sich um ein amtliches Schreiben. Bitte prüfe die Details manuell.", ampel: "gelb", todos: ["Brief im Detail prüfen", "Fristen beachten"], frist: null, kategorie: "Sonstiges", behoerde: "Behörde", aktenzeichen: null, referenzen: [] };
   }
 }
 
@@ -1259,7 +1260,7 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
 
       if (activeProject) {
         // If we're inside a project, add to that project
-        const up = projects.map(p => p.id === activeProject.id ? { ...p, letters: [...p.letters, nl], ampel: result.ampel, frist: result.frist || p.frist, behoerde: result.behoerde || p.behoerde } : p);
+        const up = projects.map(p => p.id === activeProject.id ? { ...p, letters: [...p.letters, nl], ampel: result.ampel, frist: result.frist || p.frist, behoerde: result.behoerde || p.behoerde, aktenzeichen: result.aktenzeichen || p.aktenzeichen || "", referenzen: [...(p.referenzen || []), ...(result.referenzen || [])].filter((v, i, a) => a.indexOf(v) === i) } : p);
         setProjects(up);
         setActiveProject(prev => ({ ...prev, letters: [...prev.letters, nl], ampel: result.ampel }));
         setSavedToProject(activeProject);
@@ -1267,7 +1268,7 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
         // Check for matching existing project
         const match = findMatchingProject(result);
         if (match) {
-          const up = projects.map(p => p.id === match.id ? { ...p, letters: [...p.letters, nl], ampel: result.ampel, frist: result.frist || p.frist, behoerde: result.behoerde || p.behoerde } : p);
+          const up = projects.map(p => p.id === match.id ? { ...p, letters: [...p.letters, nl], ampel: result.ampel, frist: result.frist || p.frist, behoerde: result.behoerde || p.behoerde, aktenzeichen: result.aktenzeichen || p.aktenzeichen || "", referenzen: [...(p.referenzen || []), ...(result.referenzen || [])].filter((v, i, a) => a.indexOf(v) === i) } : p);
           setProjects(up);
           setSavedToProject(match);
         } else {
@@ -1278,7 +1279,7 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
             category: result.kategorie || "Sonstiges",
             status: "offen", ampel: result.ampel || "gelb",
             behoerde: result.behoerde || "Unbekannt",
-            frist: result.frist || null, aktenzeichen: "", letters: [nl],
+            frist: result.frist || null, aktenzeichen: result.aktenzeichen || "", referenzen: result.referenzen || [], letters: [nl],
           };
           setProjects(prev => [np, ...prev]);
           setSavedToProject(np);
@@ -1458,7 +1459,11 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
             <div style={{ fontSize: 12, color: brand.textMuted, marginTop: 2 }}>{projects.find(p => p.id === savedToProject.id) && findMatchingProject(analyzeResult) ? "Bestehendes Projekt erkannt" : "Neues Projekt erstellt"}</div>
           </div>
         </div>}
-        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}><AmpelBadge level={analyzeResult.ampel} /><Badge>{analyzeResult.kategorie}</Badge>{analyzeResult.frist && <Badge color={brand.danger} bg={`${brand.danger}10`}>Frist: {analyzeResult.frist}</Badge>}</div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}><AmpelBadge level={analyzeResult.ampel} /><Badge>{analyzeResult.kategorie}</Badge>{analyzeResult.frist && <Badge color={brand.danger} bg={`${brand.danger}10`}>Frist: {analyzeResult.frist}</Badge>}{analyzeResult.aktenzeichen && <Badge color={brand.info} bg={`${brand.info}10`}>Az: {analyzeResult.aktenzeichen}</Badge>}</div>
+        {analyzeResult.referenzen?.length > 0 && <div style={{ padding: 10, background: `${brand.info}06`, borderRadius: 8, border: `1px solid ${brand.info}15`, marginBottom: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: brand.info, marginBottom: 4 }}>Erkannte Referenznummern:</div>
+          {analyzeResult.referenzen.map((r, i) => <div key={i} style={{ fontSize: 13, color: brand.text, padding: "2px 0" }}>{r}</div>)}
+        </div>}
         <div style={{ padding: 16, background: brand.bgMuted, borderRadius: 10, marginBottom: 12 }}><p style={{ margin: 0, fontSize: 15, lineHeight: 1.7 }}>{analyzeResult.klartext}</p></div>
         {analyzeResult.todos?.map((t, i) => <div key={i} style={{ display: "flex", gap: 8, padding: "6px 0", fontSize: 14 }}><CheckCircle size={16} style={{ color: brand.success, flexShrink: 0 }} />{t}</div>)}
         <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
@@ -1476,9 +1481,27 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
       <div><div style={{ display: "flex", gap: 10, marginBottom: 8 }}><AmpelBadge level={activeProject.ampel} /><Badge>{activeProject.category}</Badge></div><h1 style={{ fontSize: 28, fontWeight: 800, color: brand.text, margin: "0 0 4px" }}>{activeProject.name}</h1><p style={{ fontSize: 14, color: brand.textMuted, margin: 0 }}>{activeProject.behoerde}</p></div>
       <div style={{ display: "flex", gap: 10 }}><Btn size="sm" onClick={() => setShowAnalyze(true)}><Camera size={14} /> Brief hinzufügen</Btn><Btn size="sm" variant="accent" onClick={() => { setEditorAktenzeichen(activeProject.aktenzeichen || ""); setShowEditor(true); }}><Edit3 size={14} /> Antwort schreiben</Btn></div>
     </div>
-    <Card style={{ padding: 16, marginBottom: 16, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-      <span style={{ fontSize: 14, fontWeight: 600 }}>Aktenzeichen:</span>
-      <input value={activeProject.aktenzeichen || ""} onChange={e => { const v = e.target.value; setActiveProject(p => ({...p, aktenzeichen: v})); setProjects(ps => ps.map(p => p.id === activeProject.id ? {...p, aktenzeichen: v} : p)); }} placeholder="z.B. 205/12345/2026" style={{ flex: 1, minWidth: 200, padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${brand.borderLight}`, fontSize: 14, fontFamily: "inherit", outline: "none" }} />
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: activeProject.referenzen?.length > 0 ? 12 : 0 }}>
+        <span style={{ fontSize: 14, fontWeight: 600 }}>Aktenzeichen:</span>
+        <input value={activeProject.aktenzeichen || ""} onChange={e => { const v = e.target.value; setActiveProject(p => ({...p, aktenzeichen: v})); setProjects(ps => ps.map(p => p.id === activeProject.id ? {...p, aktenzeichen: v} : p)); }} placeholder="z.B. 205/12345/2026" style={{ flex: 1, minWidth: 200, padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${brand.borderLight}`, fontSize: 14, fontFamily: "inherit", outline: "none" }} />
+        {activeProject.aktenzeichen && <span style={{ fontSize: 11, color: brand.success, fontWeight: 600 }}>✓ Wird im Antwortbrief verwendet</span>}
+      </div>
+      {activeProject.referenzen?.length > 0 && (
+        <div style={{ padding: 10, background: `${brand.info}06`, borderRadius: 8, border: `1px solid ${brand.info}12` }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: brand.info, marginBottom: 4 }}>Alle erkannten Referenznummern:</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {activeProject.referenzen.map((r, i) => (
+              <span key={i} onClick={() => { setActiveProject(p => ({...p, aktenzeichen: r.split(":").pop()?.trim() || r})); setProjects(ps => ps.map(p => p.id === activeProject.id ? {...p, aktenzeichen: r.split(":").pop()?.trim() || r} : p)); }}
+                style={{ padding: "4px 10px", borderRadius: 6, background: "#fff", border: `1px solid ${brand.info}25`, fontSize: 12, color: brand.text, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}
+                title="Klicken um als Aktenzeichen zu übernehmen">
+                {r} <span style={{ color: brand.info, fontSize: 10 }}>↗</span>
+              </span>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: brand.textMuted, marginTop: 6 }}>Klicke auf eine Nummer um sie als Aktenzeichen zu übernehmen</div>
+        </div>
+      )}
     </Card>
     {activeProject.frist && <div style={{ padding: 16, borderRadius: 12, background: `${brand.danger}08`, border: `1px solid ${brand.danger}20`, marginBottom: 24, display: "flex", alignItems: "center", gap: 12 }}><Clock size={18} style={{ color: brand.danger }} /><span style={{ fontSize: 14, fontWeight: 600, color: brand.danger }}>Frist: {activeProject.frist.split("-").reverse().join(".")} — {Math.max(0, Math.ceil((new Date(activeProject.frist) - new Date()) / 86400000))} Tage</span></div>}
     <h2 style={{ fontSize: 20, fontWeight: 700, color: brand.text, marginBottom: 20 }}>Schriftverkehr</h2>

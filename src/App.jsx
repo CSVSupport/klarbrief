@@ -344,9 +344,28 @@ function Modal({ open, onClose, title, children, wide }) {
 
 // ── KI Analysis Engine ──
 async function analyzeWithAI(text, fileData = null) {
-  const systemPrompt = `Du bist KlarBrief24, ein KI-Assistent der Behördenbriefe in einfaches Deutsch übersetzt. Antworte IMMER als JSON-Objekt mit genau diesen Feldern:
-{"klartext": "Einfache Erklärung des Briefs in 2-3 Sätzen", "ampel": "rot/gelb/gruen", "todos": ["To-Do 1", "To-Do 2"], "frist": "Datum oder null", "kategorie": "Steuern/Miete/Soziales/Bußgeld/Versicherung/Arbeit/Sonstiges", "behoerde": "Name der Behörde/Absender", "aktenzeichen": "Aktenzeichen, Geschäftszeichen, Steuernummer, Rechnungsnummer, Kundennummer, Vorgangsnummer, Kassenzeichen oder ähnliche Referenznummer aus dem Brief — oder null wenn nicht vorhanden", "referenzen": ["Liste aller im Brief gefundenen Referenznummern mit Bezeichnung, z.B. 'Aktenzeichen: 205/12345/2026', 'StNr: 123/456/78901', 'Rechnungsnr: RE-2026-4711'"]}
-WICHTIG: Suche IMMER nach Aktenzeichen, Geschäftszeichen, Steuernummern, Kassenzeichen, Rechnungsnummern, Kundennummern, Versicherungsnummern, Vertragsnummern oder sonstigen Referenznummern. Diese stehen oft oben rechts im Brief oder in der Betreffzeile. Das Feld "aktenzeichen" soll die WICHTIGSTE Referenznummer enthalten. Das Feld "referenzen" soll ALLE gefundenen Nummern enthalten.
+  const systemPrompt = `Du bist KlarBrief24, ein KI-Assistent der Behördenbriefe und Dokumente in einfaches Deutsch übersetzt. Antworte IMMER als JSON-Objekt mit genau diesen Feldern:
+{
+  "klartext": "Einfache Erklärung des Briefs/Dokuments in 2-3 Sätzen",
+  "ampel": "rot/gelb/gruen",
+  "todos": ["To-Do 1", "To-Do 2"],
+  "frist": "Datum im Format TT.MM.JJJJ oder null",
+  "kategorie": "Steuern/Miete/Soziales/Bußgeld/Versicherung/Arbeit/Rechnung/Vertrag/Sonstiges",
+  "behoerde": "Exakter Name des Absenders/der Firma/der Behörde",
+  "betreff": "Präziser Betreff des Dokuments, z.B. 'Rechnung RE-2026-4711 über Handschuhe' oder 'Nutzungsvertrag Messestand Koblenz blüht 2026' oder 'Steuerbescheid 2025'",
+  "projektname": "Kurzer, eindeutiger Projektname für die Ablage, z.B. 'Rechnung Rodopi Tools — Handschuhe' oder 'Vertrag Koblenz blüht 2026' oder 'Steuerbescheid 2025 Finanzamt Bonn'",
+  "aktenzeichen": "Aktenzeichen, Rechnungsnummer, Vertragsnummer oder ähnliche Referenznummer — oder null",
+  "referenzen": ["z.B. 'Rechnungsnr: RE122099', 'Vertragsnr: V-2026-0412'"],
+  "dokumenttyp": "Rechnung/Vertrag/Bescheid/Mahnung/Kündigung/Angebot/Mitteilung/Sonstiges"
+}
+
+KRITISCH WICHTIG für die Projektzuordnung:
+- "behoerde": IMMER den EXAKTEN Firmennamen oder Behördennamen extrahieren. "Rodopi Tools" ist NICHT "Koblenz-Stadtmarketing GmbH"!
+- "betreff": MUSS den konkreten Vorgang beschreiben. Jeder Brief/Rechnung/Vertrag hat einen EIGENEN, UNTERSCHIEDLICHEN Betreff.
+- "projektname": Soll EINDEUTIG sein. Zwei verschiedene Rechnungen von verschiedenen Firmen = zwei verschiedene Projektnamen. Ein Steuerbescheid und eine Rechnung = zwei verschiedene Projektnamen.
+- "dokumenttyp": Hilft bei der Unterscheidung. Eine Rechnung ist kein Vertrag. Ein Bescheid ist keine Mahnung.
+- "kategorie": Wurde um "Rechnung" und "Vertrag" erweitert — bitte korrekt zuordnen.
+
 Keine Markdown-Formatierung, kein Präambel, nur das JSON-Objekt.`;
 
   let messages;
@@ -373,7 +392,7 @@ Keine Markdown-Formatierung, kein Präambel, nur das JSON-Objekt.`;
     const raw = data.content?.[0]?.text || "{}";
     return JSON.parse(raw.replace(/```json|```/g, "").trim());
   } catch {
-    return { klartext: "Der Brief wurde analysiert. Es handelt sich um ein amtliches Schreiben. Bitte prüfe die Details manuell.", ampel: "gelb", todos: ["Brief im Detail prüfen", "Fristen beachten"], frist: null, kategorie: "Sonstiges", behoerde: "Behörde", aktenzeichen: null, referenzen: [] };
+    return { klartext: "Das Dokument wurde analysiert. Bitte prüfe die Details manuell.", ampel: "gelb", todos: ["Dokument im Detail prüfen", "Fristen beachten"], frist: null, kategorie: "Sonstiges", behoerde: "Unbekannt", betreff: "Dokument", projektname: "Neuer Vorgang", aktenzeichen: null, referenzen: [], dokumenttyp: "Sonstiges" };
   }
 }
 
@@ -1470,16 +1489,41 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
   const [savedToProject, setSavedToProject] = useState(null);
 
   const findMatchingProject = (result) => {
-    if (!result?.behoerde) return null;
-    const behoerde = result.behoerde.toLowerCase().trim();
+    if (!result?.behoerde || !result?.betreff) return null;
+    const rBehoerde = result.behoerde.toLowerCase().trim();
+    const rBetreff = result.betreff.toLowerCase().trim();
+    const rTyp = (result.dokumenttyp || "").toLowerCase();
+    const rAkz = (result.aktenzeichen || "").toLowerCase().trim();
+
     return projects.find(p => {
-      const pB = p.behoerde.toLowerCase().trim();
-      if (pB === behoerde) return true;
-      // Fuzzy: check if key words overlap
-      const words = behoerde.split(/\s+/).filter(w => w.length > 3);
-      const pWords = pB.split(/\s+/).filter(w => w.length > 3);
-      const overlap = words.filter(w => pWords.some(pw => pw.includes(w) || w.includes(pw)));
-      return overlap.length >= 1 && p.category === result.kategorie;
+      const pBehoerde = (p.behoerde || "").toLowerCase().trim();
+      const pName = (p.name || "").toLowerCase();
+      const pAkz = (p.aktenzeichen || "").toLowerCase().trim();
+
+      // Rule 1: If same Aktenzeichen exists and is not empty → same project
+      if (rAkz && pAkz && rAkz === pAkz) return true;
+
+      // Rule 2: Behörde must match (strict)
+      const behoerdeMatch = pBehoerde === rBehoerde ||
+        (pBehoerde.length > 5 && rBehoerde.length > 5 && (pBehoerde.includes(rBehoerde) || rBehoerde.includes(pBehoerde)));
+      if (!behoerdeMatch) return false;
+
+      // Rule 3: Even with same Behörde, the subject/betreff must be similar
+      // Extract key terms from betreff (remove common filler words)
+      const stopWords = ["der","die","das","ein","eine","für","von","vom","und","über","zur","zum","auf","aus","mit","nach","bei","bis","in","an","am","im"];
+      const getKeyWords = (str) => str.split(/[\s,.\-—–\/]+/).filter(w => w.length > 2 && !stopWords.includes(w));
+      const rKeyWords = getKeyWords(rBetreff);
+      const pKeyWords = getKeyWords(pName);
+
+      // Need at least 2 matching key words for same-subject match
+      const keyWordOverlap = rKeyWords.filter(rw => pKeyWords.some(pw => pw.includes(rw) || rw.includes(pw)));
+      if (keyWordOverlap.length >= 2) return true;
+
+      // Rule 4: Same Behörde + same Dokumenttyp + very recent (within same month) → might be follow-up
+      // But only for Bescheide/Mahnungen, NOT for Rechnungen (each Rechnung = own project)
+      if (rTyp === "rechnung" || rTyp === "vertrag" || rTyp === "angebot") return false;
+
+      return false;
     });
   };
 
@@ -1489,37 +1533,39 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
     const result = await analyzeWithAI(analyzeText, fileData);
     setAnalyzeResult(result);
 
-    // Auto-assign to project
     if (result) {
       const nl = {
         id: Date.now(), date: new Date().toLocaleDateString("de-DE"), direction: "eingehend",
-        type: result.kategorie || "Brief", summary: result.klartext, analyzed: true,
+        type: result.dokumenttyp || result.kategorie || "Brief", summary: result.klartext, analyzed: true,
+        betreff: result.betreff || null,
         document: fileData ? { base64: fileData.base64, mediaType: fileData.mediaType, isImage: fileData.isImage, isPdf: fileData.isPdf, fileName: fileData.fileName || "Dokument" } : null,
         originalText: analyzeText || null,
       };
 
       if (activeProject) {
-        // If we're inside a project, add to that project
+        // Inside a project → add to this project
         const up = projects.map(p => p.id === activeProject.id ? { ...p, letters: [...p.letters, nl], ampel: result.ampel, frist: result.frist || p.frist, behoerde: result.behoerde || p.behoerde, aktenzeichen: result.aktenzeichen || p.aktenzeichen || "", referenzen: [...(p.referenzen || []), ...(result.referenzen || [])].filter((v, i, a) => a.indexOf(v) === i) } : p);
         setProjects(up);
         setActiveProject(prev => ({ ...prev, letters: [...prev.letters, nl], ampel: result.ampel }));
         setSavedToProject(activeProject);
       } else {
-        // Check for matching existing project
+        // Smart matching: find existing project or create new
         const match = findMatchingProject(result);
         if (match) {
           const up = projects.map(p => p.id === match.id ? { ...p, letters: [...p.letters, nl], ampel: result.ampel, frist: result.frist || p.frist, behoerde: result.behoerde || p.behoerde, aktenzeichen: result.aktenzeichen || p.aktenzeichen || "", referenzen: [...(p.referenzen || []), ...(result.referenzen || [])].filter((v, i, a) => a.indexOf(v) === i) } : p);
           setProjects(up);
           setSavedToProject(match);
         } else {
-          // Create new project
+          // Create new project with AI-suggested name
           const np = {
             id: Date.now() + 1,
-            name: result.kategorie && result.behoerde ? `${result.kategorie} — ${result.behoerde}` : result.behoerde || result.kategorie || "Neuer Vorgang",
+            name: result.projektname || (result.betreff ? `${result.betreff}` : `${result.dokumenttyp || result.kategorie} — ${result.behoerde}`),
             category: result.kategorie || "Sonstiges",
             status: "offen", ampel: result.ampel || "gelb",
             behoerde: result.behoerde || "Unbekannt",
-            frist: result.frist || null, aktenzeichen: result.aktenzeichen || "", referenzen: result.referenzen || [], letters: [nl],
+            frist: result.frist || null, aktenzeichen: result.aktenzeichen || "", referenzen: result.referenzen || [],
+            dokumenttyp: result.dokumenttyp || null,
+            letters: [nl],
           };
           setProjects(prev => [np, ...prev]);
           setSavedToProject(np);
@@ -1705,7 +1751,8 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
             <div style={{ fontSize: 12, color: brand.textMuted, marginTop: 2 }}>{projects.find(p => p.id === savedToProject.id) && findMatchingProject(analyzeResult) ? "Bestehendes Projekt erkannt" : "Neues Projekt erstellt"}</div>
           </div>
         </div>}
-        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}><AmpelBadge level={analyzeResult.ampel} /><Badge>{analyzeResult.kategorie}</Badge>{analyzeResult.frist && <Badge color={brand.danger} bg={`${brand.danger}10`}>Frist: {analyzeResult.frist}</Badge>}{analyzeResult.aktenzeichen && <Badge color={brand.info} bg={`${brand.info}10`}>Az: {analyzeResult.aktenzeichen}</Badge>}</div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}><AmpelBadge level={analyzeResult.ampel} />{analyzeResult.dokumenttyp && <Badge color="#8b5cf6" bg="#8b5cf612">{analyzeResult.dokumenttyp}</Badge>}<Badge>{analyzeResult.kategorie}</Badge>{analyzeResult.frist && <Badge color={brand.danger} bg={`${brand.danger}10`}>Frist: {analyzeResult.frist}</Badge>}{analyzeResult.aktenzeichen && <Badge color={brand.info} bg={`${brand.info}10`}>Az: {analyzeResult.aktenzeichen}</Badge>}</div>
+        {analyzeResult.betreff && <div style={{ fontSize: 15, fontWeight: 700, color: brand.text, marginBottom: 8 }}>{analyzeResult.betreff}</div>}
         {analyzeResult.referenzen?.length > 0 && <div style={{ padding: 10, background: `${brand.info}06`, borderRadius: 8, border: `1px solid ${brand.info}15`, marginBottom: 12 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: brand.info, marginBottom: 4 }}>Erkannte Referenznummern:</div>
           {analyzeResult.referenzen.map((r, i) => <div key={i} style={{ fontSize: 13, color: brand.text, padding: "2px 0" }}>{r}</div>)}
@@ -1756,7 +1803,7 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
       {activeProject.letters.map(l => (
         <div key={l.id} style={{ position: "relative", marginBottom: 20 }}>
           <div style={{ position: "absolute", left: -32, top: 4, width: 24, height: 24, borderRadius: "50%", background: l.direction === "eingehend" ? brand.info : brand.success, display: "flex", alignItems: "center", justifyContent: "center" }}>{l.direction === "eingehend" ? <Download size={12} color="#fff" /> : <Send size={12} color="#fff" />}</div>
-          <Card><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}><Badge color={l.direction === "eingehend" ? brand.info : brand.success} bg={l.direction === "eingehend" ? `${brand.info}15` : `${brand.success}15`}>{l.direction === "eingehend" ? "Eingehend" : "Ausgehend"}</Badge><span style={{ fontSize: 13, color: brand.textMuted }}>{l.date}</span></div><h4 style={{ fontSize: 16, fontWeight: 700, color: brand.text, margin: "0 0 6px" }}>{l.type}</h4><p style={{ fontSize: 14, color: brand.textMuted, lineHeight: 1.6, margin: "0 0 8px" }}>{l.summary}</p>
+          <Card><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}><div style={{ display: "flex", gap: 6 }}><Badge color={l.direction === "eingehend" ? brand.info : brand.success} bg={l.direction === "eingehend" ? `${brand.info}15` : `${brand.success}15`}>{l.direction === "eingehend" ? "Eingehend" : "Ausgehend"}</Badge><Badge color="#8b5cf6" bg="#8b5cf610">{l.type}</Badge></div><span style={{ fontSize: 13, color: brand.textMuted }}>{l.date}</span></div><h4 style={{ fontSize: 16, fontWeight: 700, color: brand.text, margin: "0 0 6px" }}>{l.betreff || l.type}</h4><p style={{ fontSize: 14, color: brand.textMuted, lineHeight: 1.6, margin: "0 0 8px" }}>{l.summary}</p>
             {l.document && <button onClick={(e) => { e.stopPropagation(); setShowDocument(l.document); }} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 6, border: `1px solid ${brand.borderLight}`, background: brand.bgMuted, color: brand.primary, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{l.document.isImage ? <Image size={13} /> : <File size={13} />} {l.document.fileName || "Dokument anzeigen"}</button>}
           </Card>
         </div>
@@ -1788,7 +1835,8 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
       <Btn onClick={handleAnalyze} style={{ width: "100%" }}>{analyzing ? <><RefreshCw size={16} style={{ animation: "spin 1s linear infinite" }} /> Analysiere...</> : <><Zap size={16} /> Analysieren</>}</Btn>
       {analyzeResult && <div style={{ marginTop: 20 }}>
         <div style={{ padding: 14, borderRadius: 10, background: `${brand.success}08`, border: `1px solid ${brand.success}30`, marginBottom: 12, display: "flex", alignItems: "center", gap: 10 }}><CheckCircle size={18} style={{ color: brand.success }} /><span style={{ fontSize: 14, fontWeight: 600, color: brand.success }}>Brief gespeichert in: {activeProject.name}</span></div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}><AmpelBadge level={analyzeResult.ampel} /></div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}><AmpelBadge level={analyzeResult.ampel} />{analyzeResult.dokumenttyp && <Badge color="#8b5cf6" bg="#8b5cf612">{analyzeResult.dokumenttyp}</Badge>}</div>
+        {analyzeResult.betreff && <div style={{ fontSize: 14, fontWeight: 700, color: brand.text, marginBottom: 8 }}>{analyzeResult.betreff}</div>}
         <div style={{ padding: 16, background: brand.bgMuted, borderRadius: 10, marginBottom: 12 }}><p style={{ margin: 0, fontSize: 15, lineHeight: 1.7 }}>{analyzeResult.klartext}</p></div>
         <div style={{ display: "flex", gap: 10 }}>
           <Btn variant="primary" onClick={() => { setShowAnalyze(false); setAnalyzeText(""); setAnalyzeResult(null); setFileData(null); setSavedToProject(null); }}>Fertig</Btn>

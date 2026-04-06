@@ -344,7 +344,7 @@ function Modal({ open, onClose, title, children, wide }) {
 
 // ── KI Analysis Engine ──
 async function analyzeWithAI(text, fileData = null) {
-  const systemPrompt = `Du bist KlarBrief, ein KI-Assistent der Behördenbriefe in einfaches Deutsch übersetzt. Antworte IMMER als JSON-Objekt mit genau diesen Feldern:
+  const systemPrompt = `Du bist KlarBrief24, ein KI-Assistent der Behördenbriefe in einfaches Deutsch übersetzt. Antworte IMMER als JSON-Objekt mit genau diesen Feldern:
 {"klartext": "Einfache Erklärung des Briefs in 2-3 Sätzen", "ampel": "rot/gelb/gruen", "todos": ["To-Do 1", "To-Do 2"], "frist": "Datum oder null", "kategorie": "Steuern/Miete/Soziales/Bußgeld/Versicherung/Arbeit/Sonstiges", "behoerde": "Name der Behörde/Absender", "aktenzeichen": "Aktenzeichen, Geschäftszeichen, Steuernummer, Rechnungsnummer, Kundennummer, Vorgangsnummer, Kassenzeichen oder ähnliche Referenznummer aus dem Brief — oder null wenn nicht vorhanden", "referenzen": ["Liste aller im Brief gefundenen Referenznummern mit Bezeichnung, z.B. 'Aktenzeichen: 205/12345/2026', 'StNr: 123/456/78901', 'Rechnungsnr: RE-2026-4711'"]}
 WICHTIG: Suche IMMER nach Aktenzeichen, Geschäftszeichen, Steuernummern, Kassenzeichen, Rechnungsnummern, Kundennummern, Versicherungsnummern, Vertragsnummern oder sonstigen Referenznummern. Diese stehen oft oben rechts im Brief oder in der Betreffzeile. Das Feld "aktenzeichen" soll die WICHTIGSTE Referenznummer enthalten. Das Feld "referenzen" soll ALLE gefundenen Nummern enthalten.
 Keine Markdown-Formatierung, kein Präambel, nur das JSON-Objekt.`;
@@ -387,9 +387,8 @@ function Navbar({ page, setPage, isLoggedIn, isAdmin, onLogout }) {
   ];
   return <nav style={{ position: "sticky", top: 0, zIndex: 100, background: "rgba(255,255,255,0.92)", backdropFilter: "blur(12px)", borderBottom: `1px solid ${brand.borderLight}`, padding: "0 20px" }}>
     <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", height: 64 }}>
-      <div onClick={() => setPage("home")} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{ width: 36, height: 36, borderRadius: 10, background: `linear-gradient(135deg, ${brand.primary}, ${brand.primaryLight})`, display: "flex", alignItems: "center", justifyContent: "center" }}><FileText size={20} color="#fff" /></div>
-        <span style={{ fontSize: 22, fontWeight: 800, color: brand.primary, letterSpacing: "-0.03em" }}>KlarBrief</span>
+      <div onClick={() => setPage("home")} style={{ cursor: "pointer", display: "flex", alignItems: "center" }}>
+        <img src="/logo.png" alt="KlarBrief24" style={{ height: 38, width: "auto" }} />
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 4 }} className="nav-desktop">
         {navItems.map(n => <button key={n.id} onClick={() => setPage(n.id)} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: page === n.id ? brand.bgMuted : "transparent", color: page === n.id ? brand.primary : brand.textMuted, fontWeight: 600, fontSize: 14, cursor: "pointer", transition: "all 0.2s", fontFamily: "inherit" }}>{n.label}</button>)}
@@ -417,9 +416,8 @@ function Footer({ setPage }) {
     <div style={{ maxWidth: 1200, margin: "0 auto" }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 40, marginBottom: 48 }}>
         <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-            <div style={{ width: 36, height: 36, borderRadius: 10, background: `linear-gradient(135deg, ${brand.primaryLight}, ${brand.accent})`, display: "flex", alignItems: "center", justifyContent: "center" }}><FileText size={20} color="#fff" /></div>
-            <span style={{ fontSize: 22, fontWeight: 800, color: "#fff" }}>KlarBrief</span>
+          <div style={{ marginBottom: 16 }}>
+            <img src="/logo.png" alt="KlarBrief24" style={{ height: 36, width: "auto", filter: "brightness(10)" }} />
           </div>
           <p style={{ fontSize: 14, color: "rgba(255,255,255,0.6)", lineHeight: 1.7 }}>Behördenbriefe? Endlich verstanden. KI-gestützte Analyse amtlicher Schreiben in einfaches Deutsch.</p>
         </div>
@@ -441,7 +439,7 @@ function Footer({ setPage }) {
         </div>
       </div>
       <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", paddingTop: 24, display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-        <p style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", margin: 0 }}>© 2026 KlarBrief — eine Marke der ETONI UG (haftungsbeschränkt)</p>
+        <p style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", margin: 0 }}>© 2026 KlarBrief24 — eine Marke der ETONI UG (haftungsbeschränkt)</p>
         <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "rgba(255,255,255,0.5)" }}><Heart size={14} style={{ color: brand.accent }} /> Mit Herz aus dem Ahrtal</div>
       </div>
     </div>
@@ -468,7 +466,7 @@ function LaptopMockup({ children }) {
         <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#febc2e" }} />
         <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#28c840" }} />
         <div style={{ flex: 1, height: 14, borderRadius: 4, background: "#1a1a1a", marginLeft: 10, display: "flex", alignItems: "center", padding: "0 8px" }}>
-          <span style={{ fontSize: 7, color: "#666", fontFamily: "monospace" }}>🔒 klarbrief.de</span>
+          <span style={{ fontSize: 7, color: "#666", fontFamily: "monospace" }}>🔒 klarbrief24.de</span>
         </div>
       </div>
       <div style={{ background: "#fff", borderRadius: "7px 7px 0 0", overflow: "hidden", height: 340 }}>{children}</div>
@@ -481,7 +479,7 @@ function LaptopMockup({ children }) {
 function MockScreenCamera() {
   return <div style={{ height: "100%", background: brand.bg, padding: 14, fontSize: 10, fontFamily: "'DM Sans',sans-serif" }}>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-      <span style={{ fontSize: 12, fontWeight: 800, color: brand.primary }}>KlarBrief</span>
+      <span style={{ fontSize: 12, fontWeight: 800, color: brand.primary }}>KlarBrief24</span>
       <div style={{ width: 24, height: 24, borderRadius: 7, background: brand.bgMuted, display: "flex", alignItems: "center", justifyContent: "center" }}><Menu size={12} color={brand.primary} /></div>
     </div>
     <div style={{ border: `2px dashed ${brand.primary}40`, borderRadius: 12, padding: "24px 12px", textAlign: "center", background: `${brand.primary}05`, marginBottom: 12 }}>
@@ -518,7 +516,7 @@ function MockScreenAnalysis() {
       <span style={{ padding: "3px 8px", borderRadius: 10, background: `${brand.danger}08`, color: brand.danger, fontSize: 8, fontWeight: 600 }}>⏰ 15.04.2026</span>
     </div>
     <div style={{ padding: 10, background: brand.bgMuted, borderRadius: 8, marginBottom: 10 }}>
-      <div style={{ fontSize: 9, fontWeight: 700, color: brand.primary, marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}><FileText size={10}/> KlarBrief-Übersetzung</div>
+      <div style={{ fontSize: 9, fontWeight: 700, color: brand.primary, marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}><FileText size={10}/> KlarBrief24-Übersetzung</div>
       <div style={{ fontSize: 9, color: brand.text, lineHeight: 1.7 }}>Du musst 847,50€ an das Finanzamt nachzahlen für 2025. Frist ist der 15.04.2026. Prüfe ob die Berechnung stimmt — besonders die Werbungskosten.</div>
     </div>
     <div style={{ padding: 10, background: `${brand.accent}08`, borderRadius: 8, border: `1px solid ${brand.accent}20` }}>
@@ -610,7 +608,7 @@ function MockScreenDesktop() {
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 6px 6px", borderBottom: `1px solid ${brand.borderLight}`, marginBottom: 8 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
         <div style={{ width: 14, height: 14, borderRadius: 4, background: brand.primary, display: "flex", alignItems: "center", justifyContent: "center" }}><FileText size={8} color="#fff" /></div>
-        <span style={{ fontWeight: 800, color: brand.primary, fontSize: 9 }}>KlarBrief</span>
+        <span style={{ fontWeight: 800, color: brand.primary, fontSize: 9 }}>KlarBrief24</span>
       </div>
       <div style={{ display: "flex", gap: 10, fontSize: 7, color: brand.textMuted }}><span style={{ color: brand.primary, fontWeight: 600 }}>Dashboard</span><span>Projekte</span><span>Archiv</span><span>Einstellungen</span></div>
       <div style={{ width: 18, height: 18, borderRadius: "50%", background: `linear-gradient(135deg, ${brand.primary}, ${brand.accent})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 6, color: "#fff", fontWeight: 700 }}>M</div>
@@ -671,7 +669,7 @@ function HomePage({ setPage }) {
             Behördenbriefe?<br /><span style={{ color: brand.primary }}>Endlich verstanden.</span>
           </h1>
           <p style={{ fontSize: "clamp(16px, 2.5vw, 20px)", color: brand.textMuted, lineHeight: 1.7, margin: "0 0 32px", maxWidth: 520 }}>
-            Fotografiere deinen Brief oder lade ein PDF hoch. KlarBrief erklärt in Sekunden, was er bedeutet und was du tun musst.
+            Fotografiere deinen Brief oder lade ein PDF hoch. KlarBrief24 erklärt in Sekunden, was er bedeutet und was du tun musst.
           </p>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
             <Btn size="lg" variant="primary" onClick={() => setPage("register")}><Camera size={20} /> Brief scannen</Btn>
@@ -717,7 +715,7 @@ function HomePage({ setPage }) {
     <section id="demo" style={{ padding: "80px 20px", background: brand.bgMuted }}>
       <div style={{ maxWidth: 900, margin: "0 auto" }}>
         <div style={{ textAlign: "center", marginBottom: 40 }}>
-          <h2 style={{ fontSize: 36, fontWeight: 800, color: brand.text, marginBottom: 12 }}>Live-Demo: Teste KlarBrief jetzt</h2>
+          <h2 style={{ fontSize: 36, fontWeight: 800, color: brand.text, marginBottom: 12 }}>Live-Demo: Teste KlarBrief24 jetzt</h2>
           <p style={{ fontSize: 17, color: brand.textMuted }}>Lade ein Foto/PDF hoch oder füge Text ein</p>
         </div>
         <Card style={{ padding: 32 }}>
@@ -767,7 +765,7 @@ function HomePage({ setPage }) {
                 {demoResult.frist && <Badge color={brand.danger} bg={`${brand.danger}10`}>⏰ Frist: {demoResult.frist}</Badge>}
               </div>
               <div style={{ padding: 20, background: brand.bgMuted, borderRadius: 12, marginBottom: 16 }}>
-                <h4 style={{ fontSize: 16, fontWeight: 700, color: brand.primary, marginTop: 0, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}><FileText size={18} /> KlarBrief-Übersetzung</h4>
+                <h4 style={{ fontSize: 16, fontWeight: 700, color: brand.primary, marginTop: 0, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}><FileText size={18} /> KlarBrief24-Übersetzung</h4>
                 <p style={{ fontSize: 16, color: brand.text, lineHeight: 1.7, margin: 0 }}>{demoResult.klartext}</p>
               </div>
               {demoResult.todos?.length > 0 && (
@@ -817,7 +815,7 @@ function HomePage({ setPage }) {
             <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 12px", borderRadius: 20, background: `${brand.info}10`, marginBottom: 12 }}><Search size={14} style={{ color: brand.info }} /><span style={{ fontSize: 12, fontWeight: 600, color: brand.info }}>KI-Analyse</span></div>
             <h3 style={{ fontSize: 28, fontWeight: 800, color: brand.text, margin: "0 0 12px" }}>Brief-Analyse mit Ampel</h3>
             <p style={{ fontSize: 16, color: brand.textMuted, lineHeight: 1.8, margin: "0 0 16px" }}>Jeder Brief bekommt eine Dringlichkeitsstufe: Rot für sofortigen Handlungsbedarf, Gelb für wichtig, Grün für rein informativ.</p>
-            <p style={{ fontSize: 16, color: brand.textMuted, lineHeight: 1.8, margin: 0 }}>Dazu eine klare KlarBrief-Übersetzung, extrahierte Fristen und eine konkrete To-Do-Liste.</p>
+            <p style={{ fontSize: 16, color: brand.textMuted, lineHeight: 1.8, margin: 0 }}>Dazu eine klare KlarBrief24-Übersetzung, extrahierte Fristen und eine konkrete To-Do-Liste.</p>
           </div>
           <div style={{ flex: "0 1 260px", display: "flex", justifyContent: "center" }}>
             <PhoneMockup><MockScreenAnalysis /></PhoneMockup>
@@ -880,9 +878,9 @@ function HomePage({ setPage }) {
         <h2 style={{ fontSize: 36, fontWeight: 800, color: brand.text, marginBottom: 40 }}>Das sagen unsere Nutzer</h2>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 24 }}>
           {[
-            { name: "Sandra K.", role: "Mieterin aus Köln", text: "Endlich verstehe ich meine Nebenkostenabrechnung! KlarBrief hat mir gezeigt, dass mein Vermieter 340€ zu viel berechnet hat." },
+            { name: "Sandra K.", role: "Mieterin aus Köln", text: "Endlich verstehe ich meine Nebenkostenabrechnung! KlarBrief24 hat mir gezeigt, dass mein Vermieter 340€ zu viel berechnet hat." },
             { name: "Ahmed B.", role: "Selbstständiger", text: "Einfach den Steuerbescheid abfotografiert und in 5 Sekunden wusste ich was Sache ist. Genial!" },
-            { name: "Maria W.", role: "Rentnerin aus München", text: "Meine Enkelin hat mir KlarBrief gezeigt. Jetzt kann ich meine Post vom Amt endlich selbst verstehen." },
+            { name: "Maria W.", role: "Rentnerin aus München", text: "Meine Enkelin hat mir KlarBrief24 gezeigt. Jetzt kann ich meine Post vom Amt endlich selbst verstehen." },
           ].map((t, i) => (
             <Card key={i} style={{ textAlign: "left" }}>
               <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>{[1,2,3,4,5].map(s => <Star key={s} size={16} fill={brand.accent} color={brand.accent} />)}</div>
@@ -912,7 +910,7 @@ function HomePage({ setPage }) {
 function FeaturesPage() {
   const features = [
     { icon: Camera, title: "Foto & PDF Upload", desc: "Öffne die Kamera direkt in der App und fotografiere deinen Brief. Oder lade ein PDF, JPG oder PNG hoch. Die KI erkennt den Text automatisch — auch bei schiefen Fotos, Handschrift-Anmerkungen und schlechter Bildqualität. Drag & Drop wird ebenfalls unterstützt.", color: brand.primary },
-    { icon: Search, title: "KI-Brief-Analyse", desc: "KlarBrief nutzt modernste KI-Technologie um Behördendeutsch Satz für Satz zu übersetzen. Fachbegriffe werden erklärt, Paragraphen aufgelöst, und der Gesamtkontext eingeordnet.", color: brand.info },
+    { icon: Search, title: "KI-Brief-Analyse", desc: "KlarBrief24 nutzt modernste KI-Technologie um Behördendeutsch Satz für Satz zu übersetzen. Fachbegriffe werden erklärt, Paragraphen aufgelöst, und der Gesamtkontext eingeordnet.", color: brand.info },
     { icon: AlertTriangle, title: "Ampel-Bewertung", desc: "Rot für sofortigen Handlungsbedarf mit Frist, Gelb für wichtig aber nicht dringend, Grün für rein informativ. So weißt du sofort, welcher Brief zuerst bearbeitet werden muss.", color: brand.danger },
     { icon: Folder, title: "Projekt-System", desc: "Jeder Vorgang wird ein eigenes Projekt mit chronologischem Schriftverkehr, eingehend und ausgehend. Komplett mit Frist-Tracking, Notizen und Dokumenten-Anhängen.", color: brand.accent },
     { icon: Edit3, title: "Brief-Editor mit KI", desc: "Sag in einfachen Worten was du willst. Die KI erstellt einen professionellen Brief im DIN-5008-Format. Wähle den Ton: sachlich, fordernd oder freundlich. Direkt drucken oder als PDF speichern.", color: brand.success },
@@ -941,13 +939,13 @@ function FeaturesPage() {
 
 function UseCasesPage({ setPage }) {
   const cases = [
-    { icon: "📊", title: "Steuerbescheid verstehen", desc: "KlarBrief erklärt dir deinen Steuerbescheid Zeile für Zeile und zeigt ob sich ein Einspruch lohnt." },
-    { icon: "🏠", title: "Nebenkostenabrechnung prüfen", desc: "Jede zweite Abrechnung ist fehlerhaft. KlarBrief findet überhöhte Posten und falsche Verteilschlüssel." },
-    { icon: "🚗", title: "Bußgeldbescheid", desc: "Geblitzt? KlarBrief analysiert den Bescheid, zeigt Fehler und hilft beim Einspruch." },
+    { icon: "📊", title: "Steuerbescheid verstehen", desc: "KlarBrief24 erklärt dir deinen Steuerbescheid Zeile für Zeile und zeigt ob sich ein Einspruch lohnt." },
+    { icon: "🏠", title: "Nebenkostenabrechnung prüfen", desc: "Jede zweite Abrechnung ist fehlerhaft. KlarBrief24 findet überhöhte Posten und falsche Verteilschlüssel." },
+    { icon: "🚗", title: "Bußgeldbescheid", desc: "Geblitzt? KlarBrief24 analysiert den Bescheid, zeigt Fehler und hilft beim Einspruch." },
     { icon: "👨‍👩‍👧", title: "Elterngeld & Kindergeld", desc: "Bewilligungsbescheide und Ablehnungen verständlich erklärt." },
     { icon: "🏥", title: "Krankenkasse lehnt ab?", desc: "Ablehnungsbescheid erklärt, professionellen Widerspruch generieren." },
     { icon: "💼", title: "Jobcenter & Arbeitsagentur", desc: "Bescheide prüfen, Berechnungen nachvollziehen, Widerspruch einlegen." },
-    { icon: "📬", title: "Mahnung & Inkasso", desc: "Forderung berechtigt? KlarBrief prüft auf Fehler und unberechtigte Gebühren." },
+    { icon: "📬", title: "Mahnung & Inkasso", desc: "Forderung berechtigt? KlarBrief24 prüft auf Fehler und unberechtigte Gebühren." },
     { icon: "📝", title: "Brief vom Vermieter", desc: "Mieterhöhung, Kündigung, Abmahnung — deine Rechte auf einen Blick." },
   ];
   return <div style={{ padding: "80px 20px", maxWidth: 1100, margin: "0 auto" }}>
@@ -971,7 +969,7 @@ function UseCasesPage({ setPage }) {
 function PricingPage({ setPage }) {
   const [annual, setAnnual] = useState(false);
   const plans = [
-    { name: "Free", price: "0", annual: "0", features: ["3 Analysen / Monat", "Foto & PDF Upload", "KlarBrief-Übersetzung", "Ampel-Bewertung", "To-Do-Liste"], cta: "Kostenlos starten", popular: false },
+    { name: "Free", price: "0", annual: "0", features: ["3 Analysen / Monat", "Foto & PDF Upload", "KlarBrief24-Übersetzung", "Ampel-Bewertung", "To-Do-Liste"], cta: "Kostenlos starten", popular: false },
     { name: "Plus", price: "4,99", annual: "39,99", features: ["Unbegrenzte Analysen", "Foto, PDF & Text", "Komplett-Archiv", "Frist-Erinnerungen", "Antwort-Assistent", "Familien-Modus (3 Pers.)"], cta: "Plus wählen", popular: true },
     { name: "Pro", price: "9,99", annual: "79,99", features: ["Alles aus Plus", "PDF-Antwortbriefe", "KI-Einspruch-Generator", "Vertragsprüfung", "Telefon-Vorbereitung", "Familien-Modus (6 Pers.)", "Priority-Support"], cta: "Pro wählen", popular: false },
   ];
@@ -999,7 +997,7 @@ function PricingPage({ setPage }) {
     </div>
     <div style={{ marginTop: 80, maxWidth: 700, margin: "80px auto 0" }}>
       <h2 style={{ fontSize: 32, fontWeight: 800, color: brand.text, textAlign: "center", marginBottom: 32 }}>Häufige Fragen</h2>
-      {[["Kann ich jederzeit kündigen?", "Ja. Monatlich kündbar, wirksam zum Monatsende."],["Was passiert mit meinen Daten?", "30 Tage nach Kündigung vollständig gelöscht. Vorher Datenexport möglich."],["Ist KlarBrief eine Rechtsberatung?", "Nein. KlarBrief hilft beim Verstehen, ersetzt aber keinen Anwalt."],["Wo werden Daten gespeichert?", "Verschlüsselt auf Servern in Deutschland. DSGVO-konform."],["Welche Dateiformate werden unterstützt?", "Fotos (JPG, PNG), PDF-Dokumente und Textdateien. Kamera-Aufnahme direkt aus der App."]].map(([q, a], i) => <FaqItem key={i} question={q} answer={a} />)}
+      {[["Kann ich jederzeit kündigen?", "Ja. Monatlich kündbar, wirksam zum Monatsende."],["Was passiert mit meinen Daten?", "30 Tage nach Kündigung vollständig gelöscht. Vorher Datenexport möglich."],["Ist KlarBrief24 eine Rechtsberatung?", "Nein. KlarBrief24 hilft beim Verstehen, ersetzt aber keinen Anwalt."],["Wo werden Daten gespeichert?", "Verschlüsselt auf Servern in Deutschland. DSGVO-konform."],["Welche Dateiformate werden unterstützt?", "Fotos (JPG, PNG), PDF-Dokumente und Textdateien. Kamera-Aufnahme direkt aus der App."]].map(([q, a], i) => <FaqItem key={i} question={q} answer={a} />)}
     </div>
   </div>;
 }
@@ -1038,11 +1036,11 @@ function BlogPage() {
 
 function AboutPage() {
   return <div style={{ padding: "80px 20px", maxWidth: 800, margin: "0 auto" }}>
-    <div style={{ textAlign: "center", marginBottom: 60 }}><h1 style={{ fontSize: 44, fontWeight: 800, color: brand.text, marginBottom: 16 }}>Über KlarBrief</h1><p style={{ fontSize: 18, color: brand.textMuted }}>Bürokratie darf keine Barriere sein.</p></div>
+    <div style={{ textAlign: "center", marginBottom: 60 }}><h1 style={{ fontSize: 44, fontWeight: 800, color: brand.text, marginBottom: 16 }}>Über KlarBrief24</h1><p style={{ fontSize: 18, color: brand.textMuted }}>Bürokratie darf keine Barriere sein.</p></div>
     <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
       <Card style={{ padding: 32 }}>
         <h2 style={{ fontSize: 24, fontWeight: 700, color: brand.text, marginTop: 0 }}>Unsere Mission</h2>
-        <p style={{ fontSize: 16, color: brand.textMuted, lineHeight: 1.8 }}>Über die Hälfte aller Deutschen hat Schwierigkeiten, amtliche Schreiben zu verstehen. KlarBrief macht Schluss damit — Brief fotografieren, KI analysiert, fertig.</p>
+        <p style={{ fontSize: 16, color: brand.textMuted, lineHeight: 1.8 }}>Über die Hälfte aller Deutschen hat Schwierigkeiten, amtliche Schreiben zu verstehen. KlarBrief24 macht Schluss damit — Brief fotografieren, KI analysiert, fertig.</p>
       </Card>
       <Card style={{ padding: 32 }}>
         <h2 style={{ fontSize: 24, fontWeight: 700, color: brand.text, marginTop: 0 }}>Das Team</h2>
@@ -1053,7 +1051,7 @@ function AboutPage() {
       </Card>
       <Card style={{ padding: 32, background: brand.bgMuted }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}><Heart size={20} style={{ color: brand.accent }} /><h3 style={{ fontSize: 20, fontWeight: 700, color: brand.text, margin: 0 }}>Aus dem Ahrtal</h3></div>
-        <p style={{ fontSize: 16, color: brand.textMuted, lineHeight: 1.8, margin: 0 }}>KlarBrief wird entwickelt in Bad Neuenahr-Ahrweiler. Technologie die das Leben einfacher macht.</p>
+        <p style={{ fontSize: 16, color: brand.textMuted, lineHeight: 1.8, margin: 0 }}>KlarBrief24 wird entwickelt in Bad Neuenahr-Ahrweiler. Technologie die das Leben einfacher macht.</p>
       </Card>
     </div>
   </div>;
@@ -1206,9 +1204,9 @@ function AuthPage({ mode, setPage, onLogin }) {
   return <div style={{ minHeight: "80vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "40px 20px", background: brand.bgMuted }}>
     <Card style={{ maxWidth: 440, width: "100%", padding: 40 }}>
       <div style={{ textAlign: "center", marginBottom: 32 }}>
-        <div style={{ width: 56, height: 56, borderRadius: 16, background: `linear-gradient(135deg, ${brand.primary}, ${brand.primaryLight})`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}><FileText size={28} color="#fff" /></div>
+        <img src="/logo.png" alt="KlarBrief24" style={{ height: 48, width: "auto", margin: "0 auto 16px", display: "block" }} />
         <h1 style={{ fontSize: 28, fontWeight: 800, color: brand.text, margin: "0 0 4px" }}>{mode === "login" ? "Willkommen zurück" : "Account erstellen"}</h1>
-        <p style={{ fontSize: 15, color: brand.textMuted, margin: 0 }}>{mode === "login" ? "Melde dich bei KlarBrief an" : "3 kostenlose Analysen — sofort los"}</p>
+        <p style={{ fontSize: 15, color: brand.textMuted, margin: 0 }}>{mode === "login" ? "Melde dich bei KlarBrief24 an" : "3 kostenlose Analysen — sofort los"}</p>
       </div>
       <button onClick={() => alert("Google-Login wird bald verfügbar sein. Bitte registriere dich mit E-Mail und Passwort.")} style={{ width: "100%", padding: "12px 20px", borderRadius: 10, border: `1.5px solid ${brand.borderLight}`, background: "#f9fafb", color: brand.textMuted, fontWeight: 600, fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 24, fontFamily: "inherit", position: "relative" }}>
         <svg width="18" height="18" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
@@ -1274,7 +1272,7 @@ function TwoFactorSetup({ email }) {
     }
   };
 
-  const otpauthUrl = `otpauth://totp/KlarBrief:${encodeURIComponent(email)}?secret=${secret}&issuer=KlarBrief&digits=6&period=30`;
+  const otpauthUrl = `otpauth://totp/KlarBrief24:${encodeURIComponent(email)}?secret=${secret}&issuer=KlarBrief24&digits=6&period=30`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(otpauthUrl)}`;
 
   if (isEnabled && setupStep === "idle") {
@@ -1434,7 +1432,7 @@ function DashboardPage({ user, setUser, setPage }) {
     const datum = new Date().toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
     const projectCtx = activeProject ? `\nPROJEKT: ${activeProject.name}, Behörde: ${activeProject.behoerde}, Aktenzeichen: ${akz || "unbekannt"}\nSchriftverkehr: ${activeProject.letters.map(l => `${l.date}: ${l.direction} — ${l.summary}`).join("; ")}` : "";
 
-    const sysPrompt = `Du bist KlarBrief, ein professioneller Briefgenerator für Behördenkorrespondenz.
+    const sysPrompt = `Du bist KlarBrief24, ein professioneller Briefgenerator für Behördenkorrespondenz.
 
 STRIKTE FORMAT-VORGABEN (DIN 5008):
 1. ABSENDER (oben links): ${senderBlock}
@@ -1674,7 +1672,7 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
     {projects.length === 0 ? (
       <Card style={{ padding: 48, textAlign: "center" }}>
         <div style={{ width: 72, height: 72, borderRadius: 20, background: `${brand.primary}10`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px" }}><FileText size={32} style={{ color: brand.primary }} /></div>
-        <h3 style={{ fontSize: 22, fontWeight: 700, color: brand.text, margin: "0 0 8px" }}>Willkommen bei KlarBrief!</h3>
+        <h3 style={{ fontSize: 22, fontWeight: 700, color: brand.text, margin: "0 0 8px" }}>Willkommen bei KlarBrief24!</h3>
         <p style={{ fontSize: 16, color: brand.textMuted, lineHeight: 1.7, margin: "0 0 24px", maxWidth: 400, marginLeft: "auto", marginRight: "auto" }}>Fotografiere oder lade deinen ersten Behördenbrief hoch.</p>
         <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}><Btn onClick={() => setShowAnalyze(true)}><Camera size={18} /> Brief scannen</Btn><Btn variant="outline" onClick={() => setShowNewProject(true)}><Plus size={18} /> Neues Projekt</Btn></div>
       </Card>
@@ -1871,7 +1869,7 @@ function LegalPage({ page }) {
   const P = ({ children }) => <p style={{ marginBottom: 12 }}>{children}</p>;
 
   if (page === "impressum") return <W><H1>Impressum</H1>
-    <H2>Angaben gemäß § 5 TMG</H2><P><strong>Anbieter</strong><br/>KlarBrief – eine Marke der ETONI UG (haftungsbeschränkt)<br/>Kiefernweg 1<br/>53474 Bad Neuenahr-Ahrweiler<br/>Deutschland</P>
+    <H2>Angaben gemäß § 5 TMG</H2><P><strong>Anbieter</strong><br/>KlarBrief24 – eine Marke der ETONI UG (haftungsbeschränkt)<br/>Kiefernweg 1<br/>53474 Bad Neuenahr-Ahrweiler<br/>Deutschland</P>
     <H2>Kontakt</H2><P>E-Mail: info@csv-support.de<br/>Web: www.csv-support.de</P>
     <H2>Handelsregister</H2><P>Registergericht: Amtsgericht Koblenz<br/>Registernummer: HRB 31805</P>
     <H2>Vertreten durch</H2><P>Geschäftsführer: Toni Krell</P>
@@ -1898,12 +1896,12 @@ function LegalPage({ page }) {
   </W>;
 
   if (page === "agb") return <W><H1>Allgemeine Geschäftsbedingungen</H1>
-    <H2>§ 1 Geltungsbereich</H2><P>Diese AGB gelten für „KlarBrief" der ETONI UG (haftungsbeschränkt), Kiefernweg 1, 53474 Bad Neuenahr-Ahrweiler.</P>
-    <H2>§ 2 Leistungsbeschreibung</H2><P>KlarBrief bietet KI-gestützte Analyse amtlicher Schreiben inkl. Foto-/PDF-Erkennung. Leistungsumfang variiert je nach Tarif.</P>
+    <H2>§ 1 Geltungsbereich</H2><P>Diese AGB gelten für „KlarBrief24" der ETONI UG (haftungsbeschränkt), Kiefernweg 1, 53474 Bad Neuenahr-Ahrweiler.</P>
+    <H2>§ 2 Leistungsbeschreibung</H2><P>KlarBrief24 bietet KI-gestützte Analyse amtlicher Schreiben inkl. Foto-/PDF-Erkennung. Leistungsumfang variiert je nach Tarif.</P>
     <H2>§ 3 Vertragsschluss</H2><P>Vertrag durch Registrierung. Bei Bezahl-Tarifen zusätzlich durch Zahlungsabschluss.</P>
     <H2>§ 4 Preise und Zahlung</H2><P>Preise inkl. MwSt. Zahlung über Stripe.</P>
     <H2>§ 5 Kündigung</H2><P>Monatsabos jederzeit zum Monatsende kündbar. Jahresabos verlängern sich automatisch (30 Tage Kündigungsfrist).</P>
-    <H2>§ 6 Haftung</H2><P><strong>KlarBrief ist keine Rechtsberatung.</strong> Keine Haftung für inhaltliche Richtigkeit der KI-Analysen. Bei komplexen Rechtsfragen wird ein Anwalt empfohlen.</P>
+    <H2>§ 6 Haftung</H2><P><strong>KlarBrief24 ist keine Rechtsberatung.</strong> Keine Haftung für inhaltliche Richtigkeit der KI-Analysen. Bei komplexen Rechtsfragen wird ein Anwalt empfohlen.</P>
     <H2>§ 7 Datenschutz</H2><P>Siehe Datenschutzerklärung unter /datenschutz.</P>
     <H2>§ 8 Schlussbestimmungen</H2><P>Deutsches Recht. Salvatorische Klausel.</P>
     <P><em>Stand: März 2026</em></P>
@@ -1913,7 +1911,7 @@ function LegalPage({ page }) {
     <H2>Widerrufsrecht</H2><P>14 Tage Widerrufsfrist ab Vertragsschluss ohne Angabe von Gründen.</P><P>An: ETONI UG (haftungsbeschränkt), Kiefernweg 1, 53474 Bad Neuenahr-Ahrweiler, info@csv-support.de</P>
     <H2>Folgen des Widerrufs</H2><P>Rückzahlung aller Zahlungen innerhalb von 14 Tagen nach Widerruf.</P>
     <H2>Muster-Widerrufsformular</H2>
-    <div style={{ padding: 20, background: brand.bgMuted, borderRadius: 12 }}><P>An: ETONI UG, Kiefernweg 1, 53474 Bad Neuenahr-Ahrweiler</P><P>Hiermit widerrufe ich den Vertrag über: KlarBrief [Tarif]</P><P>Bestellt am: ___ / Name: ___ / Anschrift: ___ / Datum: ___</P></div>
+    <div style={{ padding: 20, background: brand.bgMuted, borderRadius: 12 }}><P>An: ETONI UG, Kiefernweg 1, 53474 Bad Neuenahr-Ahrweiler</P><P>Hiermit widerrufe ich den Vertrag über: KlarBrief24 [Tarif]</P><P>Bestellt am: ___ / Name: ___ / Anschrift: ___ / Datum: ___</P></div>
     <P><em>Stand: März 2026</em></P>
   </W>;
   return null;

@@ -1,4 +1,4 @@
-# KlarBrief — Behördenbriefe einfach erklärt
+# KlarBrief24 — Behördenbriefe einfach erklärt
 
 KI-gestützte Analyse und Übersetzung amtlicher Schreiben in einfaches Deutsch.
 
@@ -7,16 +7,16 @@ KI-gestützte Analyse und Übersetzung amtlicher Schreiben in einfaches Deutsch.
 ### Schritt 1: Repository erstellen
 
 ```bash
-cd klarbrief-project
+cd klarbrief24-project
 git init
 git add .
-git commit -m "Initial commit: KlarBrief v1.0"
+git commit -m "Initial commit: KlarBrief24 v1.0"
 ```
 
-Auf GitHub ein neues Repository erstellen (z.B. `klarbrief`) und pushen:
+Auf GitHub ein neues Repository erstellen (z.B. `klarbrief24`) und pushen:
 
 ```bash
-git remote add origin https://github.com/DEIN-USERNAME/klarbrief.git
+git remote add origin https://github.com/DEIN-USERNAME/klarbrief24.git
 git branch -M main
 git push -u origin main
 ```
@@ -25,14 +25,14 @@ git push -u origin main
 
 1. Gehe zu [vercel.com](https://vercel.com) und logge dich ein
 2. Klicke **"Add New Project"**
-3. Importiere das GitHub-Repository `klarbrief`
+3. Importiere das GitHub-Repository `klarbrief24`
 4. Framework Preset: **Vite** (wird automatisch erkannt)
 5. Klicke **Deploy**
 
 ### Schritt 3: Custom Domain (optional)
 
 1. In Vercel → Project Settings → Domains
-2. Domain `klarbrief.de` hinzufügen
+2. Domain `klarbrief2424.de` hinzufügen
 3. DNS-Einträge bei deinem Provider setzen:
    - **A-Record**: `76.76.21.21`
    - **CNAME**: `cname.vercel-dns.com`

@@ -1,6 +1,6 @@
 User-agent: *
 Allow: /
-Sitemap: https://klarbrief.de/sitemap.xml
+Sitemap: https://klarbrief24.de/sitemap.xml
 
 # Crawl-delay for politeness
 Crawl-delay: 1

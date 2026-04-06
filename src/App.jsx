@@ -1390,6 +1390,22 @@ function DashboardPage({ user, setUser, setPage }) {
   useEffect(() => { try { localStorage.setItem(storageKey("projects"), JSON.stringify(projects)); } catch(e) { console.warn("Storage full", e); } }, [projects]);
   useEffect(() => { try { localStorage.setItem(storageKey("profile"), JSON.stringify(profile)); } catch(e) { console.warn("Storage full", e); } }, [profile]);
 
+  // ── Usage Tracking & Limits ──
+  const PLAN_LIMITS = { free: 3, plus: Infinity, pro: Infinity, business: Infinity };
+  const currentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+  const [usage, setUsage] = useState(() => loadState("usage", {}));
+  const monthlyCount = usage[currentMonth] || 0;
+  const planLimit = PLAN_LIMITS[profile.plan] || 3;
+  const canAnalyze = monthlyCount < planLimit;
+  const remainingAnalyses = Math.max(0, planLimit - monthlyCount);
+  const [showUpgrade, setShowUpgrade] = useState(false);
+
+  const incrementUsage = () => {
+    const updated = { ...usage, [currentMonth]: (usage[currentMonth] || 0) + 1 };
+    setUsage(updated);
+    try { localStorage.setItem(storageKey("usage"), JSON.stringify(updated)); } catch {}
+  };
+
   // Handle return from Mollie checkout
   useEffect(() => {
     const hash = window.location.hash;
@@ -1529,11 +1545,14 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
 
   const handleAnalyze = async () => {
     if (!analyzeText.trim() && !fileData) return;
+    // Check plan limit
+    if (!canAnalyze) { setShowUpgrade(true); return; }
     setAnalyzing(true); setSavedToProject(null);
     const result = await analyzeWithAI(analyzeText, fileData);
     setAnalyzeResult(result);
 
     if (result) {
+      incrementUsage(); // Count this analysis
       const nl = {
         id: Date.now(), date: new Date().toLocaleDateString("de-DE"), direction: "eingehend",
         type: result.dokumenttyp || result.kategorie || "Brief", summary: result.klartext, analyzed: true,
@@ -1698,7 +1717,11 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
   if (view === "overview") return <div style={{ padding: "32px 20px", maxWidth: 1200, margin: "0 auto" }}>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 24 }}>
       <div><h1 style={{ fontSize: 28, fontWeight: 800, color: brand.text, margin: 0 }}>Hallo, {fullName} 👋</h1><p style={{ fontSize: 15, color: brand.textMuted, margin: "4px 0 0" }}>Dein Briefverkehr auf einen Blick</p></div>
-      <div style={{ display: "flex", gap: 10 }}><Btn size="sm" onClick={() => setShowAnalyze(true)}><Camera size={16} /> Brief scannen</Btn><Btn size="sm" variant="outline" onClick={() => setShowNewProject(true)}><Plus size={16} /> Neues Projekt</Btn></div>
+      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        {profile.plan === "free" && <span style={{ fontSize: 12, color: remainingAnalyses > 0 ? brand.textMuted : brand.danger, fontWeight: 600, padding: "4px 10px", borderRadius: 8, background: remainingAnalyses > 0 ? brand.bgMuted : `${brand.danger}10` }}>{remainingAnalyses}/3 Analysen</span>}
+        <Btn size="sm" onClick={() => { if (!canAnalyze) { setShowUpgrade(true); } else { setShowAnalyze(true); } }}><Camera size={16} /> Brief scannen</Btn>
+        <Btn size="sm" variant="outline" onClick={() => setShowNewProject(true)}><Plus size={16} /> Neues Projekt</Btn>
+      </div>
     </div>
     <div style={{ display: "flex", gap: 4, marginBottom: 24 }}>
       {dashTabs.map(([id, l]) => <button key={id} onClick={() => setView(id)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: view === id ? brand.primary : "transparent", color: view === id ? "#fff" : brand.textMuted, fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>{l}</button>)}
@@ -1720,7 +1743,7 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
         <div style={{ width: 72, height: 72, borderRadius: 20, background: `${brand.primary}10`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px" }}><FileText size={32} style={{ color: brand.primary }} /></div>
         <h3 style={{ fontSize: 22, fontWeight: 700, color: brand.text, margin: "0 0 8px" }}>Willkommen bei KlarBrief24!</h3>
         <p style={{ fontSize: 16, color: brand.textMuted, lineHeight: 1.7, margin: "0 0 24px", maxWidth: 400, marginLeft: "auto", marginRight: "auto" }}>Fotografiere oder lade deinen ersten Behördenbrief hoch.</p>
-        <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}><Btn onClick={() => setShowAnalyze(true)}><Camera size={18} /> Brief scannen</Btn><Btn variant="outline" onClick={() => setShowNewProject(true)}><Plus size={18} /> Neues Projekt</Btn></div>
+        <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}><Btn onClick={() => { if (!canAnalyze) { setShowUpgrade(true); } else { setShowAnalyze(true); } }}><Camera size={18} /> Brief scannen</Btn><Btn variant="outline" onClick={() => setShowNewProject(true)}><Plus size={18} /> Neues Projekt</Btn></div>
       </Card>
     ) : (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16 }}>
@@ -1765,6 +1788,20 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
         </div>
       </div>}
     </Modal>
+    {/* Upgrade Modal */}
+    <Modal open={showUpgrade} onClose={() => setShowUpgrade(false)} title="Analyse-Limit erreicht">
+      <div style={{ textAlign: "center", padding: "12px 0 24px" }}>
+        <div style={{ width: 64, height: 64, borderRadius: 16, background: `${brand.accent}12`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}><Zap size={28} style={{ color: brand.accent }} /></div>
+        <h3 style={{ fontSize: 22, fontWeight: 800, color: brand.text, margin: "0 0 8px" }}>Dein Free-Kontingent ist aufgebraucht</h3>
+        <p style={{ fontSize: 16, color: brand.textMuted, lineHeight: 1.7, margin: "0 0 4px" }}>Du hast diesen Monat bereits <strong>{monthlyCount} von {planLimit} Analysen</strong> genutzt.</p>
+        <p style={{ fontSize: 14, color: brand.textMuted, marginBottom: 24 }}>Upgrade auf Plus oder Pro für unbegrenzte Analysen.</p>
+        <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+          <Btn variant="primary" onClick={() => { setShowUpgrade(false); setView("settings"); }}><CreditCard size={16} /> Auf Plus upgraden — 4,99€/Mo</Btn>
+          <Btn variant="accent" onClick={() => { setShowUpgrade(false); setView("settings"); }}><Zap size={16} /> Pro — 9,99€/Mo</Btn>
+        </div>
+        <p style={{ fontSize: 12, color: brand.textMuted, marginTop: 16 }}>Dein Kontingent wird am 1. {new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1).toLocaleDateString("de-DE", { month: "long" })} zurückgesetzt.</p>
+      </div>
+    </Modal>
   </div>;
 
   // ═══ PROJECT DETAIL ═══
@@ -1772,7 +1809,7 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
     <button onClick={() => { setView("overview"); setActiveProject(null); }} style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer", color: brand.primary, fontWeight: 600, fontSize: 14, padding: 0, marginBottom: 24, fontFamily: "inherit" }}><ArrowLeft size={16} /> Zurück</button>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 20 }}>
       <div><div style={{ display: "flex", gap: 10, marginBottom: 8 }}><AmpelBadge level={activeProject.ampel} /><Badge>{activeProject.category}</Badge></div><h1 style={{ fontSize: 28, fontWeight: 800, color: brand.text, margin: "0 0 4px" }}>{activeProject.name}</h1><p style={{ fontSize: 14, color: brand.textMuted, margin: 0 }}>{activeProject.behoerde}</p></div>
-      <div style={{ display: "flex", gap: 10 }}><Btn size="sm" onClick={() => setShowAnalyze(true)}><Camera size={14} /> Brief hinzufügen</Btn><Btn size="sm" variant="accent" onClick={() => { setEditorAktenzeichen(activeProject.aktenzeichen || ""); setShowEditor(true); }}><Edit3 size={14} /> Antwort schreiben</Btn></div>
+      <div style={{ display: "flex", gap: 10 }}><Btn size="sm" onClick={() => { if (!canAnalyze) { setShowUpgrade(true); } else { setShowAnalyze(true); } }}><Camera size={14} /> Brief hinzufügen</Btn><Btn size="sm" variant="accent" onClick={() => { setEditorAktenzeichen(activeProject.aktenzeichen || ""); setShowEditor(true); }}><Edit3 size={14} /> Antwort schreiben</Btn></div>
     </div>
     <Card style={{ padding: 16, marginBottom: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: activeProject.referenzen?.length > 0 ? 12 : 0 }}>

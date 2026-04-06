@@ -1129,6 +1129,53 @@ function DashboardPage({ user, setUser, setPage }) {
   // Persist projects & profile on change
   useEffect(() => { try { localStorage.setItem(storageKey("projects"), JSON.stringify(projects)); } catch(e) { console.warn("Storage full", e); } }, [projects]);
   useEffect(() => { try { localStorage.setItem(storageKey("profile"), JSON.stringify(profile)); } catch(e) { console.warn("Storage full", e); } }, [profile]);
+
+  // Handle return from Mollie checkout
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (hash.includes("payment-success")) {
+      const params = new URLSearchParams(hash.split("?")[1] || "");
+      const plan = params.get("plan");
+      const customerId = params.get("customerId");
+      if (plan && customerId) {
+        updateProfile("plan", plan);
+        updateProfile("mollieCustomerId", customerId);
+        updateProfile("pendingPlan", null);
+        // Check subscription status after short delay (webhook needs time)
+        setTimeout(async () => {
+          try {
+            const resp = await fetch("/api/mollie/status", {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ customerId }),
+            });
+            const data = await resp.json();
+            if (data.active) {
+              updateProfile("mollieSubscription", { active: true, subscriptionId: data.subscriptionId, nextPaymentDate: data.nextPaymentDate });
+            }
+          } catch (e) { console.warn("Status check failed:", e); }
+        }, 3000);
+        window.location.hash = "";
+        alert("Zahlung erfolgreich! Dein " + (plan === "pro" ? "Pro" : "Plus") + "-Abo ist jetzt aktiv.");
+      }
+    }
+  }, []);
+
+  // Periodic subscription status check (on mount)
+  useEffect(() => {
+    if (profile.mollieCustomerId && profile.plan !== "free") {
+      fetch("/api/mollie/status", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customerId: profile.mollieCustomerId }),
+      }).then(r => r.json()).then(data => {
+        if (data.active) {
+          updateProfile("mollieSubscription", { active: true, subscriptionId: data.subscriptionId, nextPaymentDate: data.nextPaymentDate });
+        } else if (!data.active && profile.mollieSubscription?.active) {
+          updateProfile("mollieSubscription", { active: false });
+          updateProfile("plan", "free");
+        }
+      }).catch(() => {});
+    }
+  }, []);
   const updateProfile = (key, val) => setProfile(p => ({ ...p, [key]: val }));
   const fullName = `${profile.vorname} ${profile.nachname}`.trim() || user?.name || "Nutzer";
   const fullAddress = [profile.strasse, `${profile.plz} ${profile.ort}`].filter(s => s.trim()).join("\n");
@@ -1277,16 +1324,73 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
     </Card>
     <Card style={{ marginBottom: 24 }}>
       <h3 style={{ fontSize: 20, fontWeight: 700, color: brand.text, marginTop: 0, marginBottom: 20 }}>Abo-Verwaltung</h3>
+      {profile.mollieSubscription?.active && (
+        <div style={{ padding: 14, borderRadius: 10, background: `${brand.success}08`, border: `1px solid ${brand.success}25`, marginBottom: 20, display: "flex", alignItems: "center", gap: 10 }}>
+          <CheckCircle size={18} style={{ color: brand.success }} />
+          <div>
+            <span style={{ fontSize: 14, fontWeight: 700, color: brand.success }}>Abo aktiv: {profile.plan === "pro" ? "Pro" : profile.plan === "business" ? "Business" : "Plus"}</span>
+            {profile.mollieSubscription.nextPaymentDate && <div style={{ fontSize: 12, color: brand.textMuted }}>Nächste Abbuchung: {profile.mollieSubscription.nextPaymentDate}</div>}
+          </div>
+        </div>
+      )}
       <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap" }}>
-        {[{ id: "free", name: "Free", price: "0€", desc: "3 Analysen/Monat" },{ id: "plus", name: "Plus", price: "4,99€/Mo", desc: "Unbegrenzt + Archiv" },{ id: "pro", name: "Pro", price: "9,99€/Mo", desc: "Alles + Briefe + Vertragsprüfung" }].map(p => (
-          <div key={p.id} onClick={() => updateProfile("plan", p.id)} style={{ flex: "1 1 160px", padding: 16, borderRadius: 12, cursor: "pointer", border: profile.plan === p.id ? `2px solid ${brand.primary}` : `1.5px solid ${brand.borderLight}`, background: profile.plan === p.id ? brand.bgMuted : "#fff" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}><span style={{ fontSize: 16, fontWeight: 700 }}>{p.name}</span>{profile.plan === p.id && <CheckCircle size={18} style={{ color: brand.primary }} />}</div>
-            <div style={{ fontSize: 20, fontWeight: 800, color: brand.primary }}>{p.price}</div>
-            <div style={{ fontSize: 12, color: brand.textMuted, marginTop: 4 }}>{p.desc}</div>
+        {[{ id: "free", name: "Free", price: "0€", desc: "3 Analysen/Monat", mo: "" },{ id: "plus", name: "Plus", price: "4,99€", desc: "Unbegrenzt + Archiv", mo: "/Monat" },{ id: "pro", name: "Pro", price: "9,99€", desc: "Alles + Briefe + Vertragsprüfung", mo: "/Monat" }].map(p => (
+          <div key={p.id} style={{ flex: "1 1 160px", padding: 16, borderRadius: 12, border: profile.plan === p.id ? `2px solid ${brand.primary}` : `1.5px solid ${brand.borderLight}`, background: profile.plan === p.id ? brand.bgMuted : "#fff", position: "relative" }}>
+            {profile.plan === p.id && <div style={{ position: "absolute", top: -10, right: 12, padding: "2px 10px", borderRadius: 10, background: brand.primary, color: "#fff", fontSize: 10, fontWeight: 700 }}>Aktiv</div>}
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>{p.name}</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: brand.primary }}>{p.price}<span style={{ fontSize: 12, fontWeight: 400, color: brand.textMuted }}>{p.mo}</span></div>
+            <div style={{ fontSize: 12, color: brand.textMuted, marginTop: 4, marginBottom: 12 }}>{p.desc}</div>
+            {profile.plan !== p.id && p.id !== "free" && (
+              <Btn size="sm" variant={p.id === "pro" ? "accent" : "primary"} onClick={async () => {
+                try {
+                  const resp = await fetch("/api/mollie/checkout", {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ email: profile.email, name: fullName, plan: p.id }),
+                  });
+                  const data = await resp.json();
+                  if (data.checkoutUrl) {
+                    // Save Mollie customer ID before redirect
+                    updateProfile("mollieCustomerId", data.customerId);
+                    updateProfile("pendingPlan", p.id);
+                    window.location.href = data.checkoutUrl;
+                  } else {
+                    alert("Fehler beim Erstellen der Zahlung: " + (data.error || "Unbekannt"));
+                  }
+                } catch (e) { alert("Verbindungsfehler. Bitte versuche es erneut."); }
+              }} style={{ width: "100%" }}>
+                <CreditCard size={14} /> {profile.plan === "free" ? "Upgraden" : "Wechseln"}
+              </Btn>
+            )}
+            {profile.plan === p.id && p.id === "free" && <span style={{ fontSize: 12, color: brand.textMuted }}>Aktueller Tarif</span>}
           </div>
         ))}
       </div>
-      {profile.plan !== "free" ? <Btn variant="outline" size="sm" onClick={() => { updateProfile("plan", "free"); alert("Abo zum Monatsende gekündigt."); }}>Abo kündigen</Btn> : <Btn size="sm" onClick={() => setPage("pricing")}>Upgrade</Btn>}
+      {profile.plan !== "free" && profile.mollieSubscription?.active && (
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <Btn variant="outline" size="sm" onClick={async () => {
+            if (!confirm("Abo wirklich kündigen? Du behältst den Zugang bis zum Ende des Abrechnungszeitraums.")) return;
+            try {
+              const resp = await fetch("/api/mollie/cancel", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ customerId: profile.mollieCustomerId, subscriptionId: profile.mollieSubscription.subscriptionId }),
+              });
+              const data = await resp.json();
+              if (data.success) {
+                updateProfile("plan", "free");
+                updateProfile("mollieSubscription", { active: false });
+                alert("Abo gekündigt. Du behältst den Zugang bis zum Ende des aktuellen Abrechnungszeitraums.");
+              } else { alert("Fehler: " + (data.error || "Unbekannt")); }
+            } catch { alert("Verbindungsfehler."); }
+          }}>Abo kündigen</Btn>
+          <span style={{ fontSize: 12, color: brand.textMuted }}>Kündigung wirkt zum Ende des Abrechnungszeitraums</span>
+        </div>
+      )}
+      {profile.plan !== "free" && !profile.mollieSubscription?.active && (
+        <div style={{ padding: 12, borderRadius: 8, background: `${brand.warning}08`, border: `1px solid ${brand.warning}25`, display: "flex", alignItems: "center", gap: 8 }}>
+          <AlertTriangle size={16} style={{ color: brand.warning }} />
+          <span style={{ fontSize: 13, color: brand.accentHover }}>Zahlung ausstehend oder Abo nicht aktiv. Bitte Tarif erneut auswählen.</span>
+        </div>
+      )}
     </Card>
     <Card>
       <h3 style={{ fontSize: 20, fontWeight: 700, color: brand.text, marginTop: 0, marginBottom: 16 }}>Datenschutz & Account</h3>

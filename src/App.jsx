@@ -9,11 +9,11 @@ import { FileText, Shield, Clock, Search, Upload, ChevronRight, Check, X, Menu, 
 const ANTHROPIC_MODEL = "claude-sonnet-4-20250514";
 
 const brand = {
-  primary: "#065f46", primaryLight: "#059669", primaryDark: "#064e3b",
-  accent: "#f59e0b", accentHover: "#d97706", accentLight: "#fbbf24",
-  bg: "#fefdf8", bgWarm: "#fef9ee", bgDark: "#022c22",
-  bgCard: "#ffffff", bgMuted: "#f0fdf4",
-  text: "#1c1917", textMuted: "#6b7280", textLight: "#f0fdf4",
+  primary: "#1e5fa8", primaryLight: "#3b82d4", primaryDark: "#15467f",
+  accent: "#f97316", accentHover: "#ea580c", accentLight: "#fb923c",
+  bg: "#fefdf8", bgWarm: "#fff7ed", bgDark: "#0f1f3a",
+  bgCard: "#ffffff", bgMuted: "#eff6ff",
+  text: "#1c1917", textMuted: "#6b7280", textLight: "#eff6ff",
   border: "#d1d5db", borderLight: "#e5e7eb",
   success: "#10b981", warning: "#f59e0b", danger: "#ef4444", info: "#3b82f6",
 };

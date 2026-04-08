@@ -1149,7 +1149,7 @@ function AuthPage({ mode, setPage, onLogin }) {
   const [totpError, setTotpError] = useState("");
   const [pendingUser, setPendingUser] = useState(null);
 
-  const ADMIN_EMAIL = "admin@csv-support.de";
+  const ADMIN_EMAIL = "info@csv-support.de";
 
   const handleSubmit = () => {
     let userData;

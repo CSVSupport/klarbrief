@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { FileText, Shield, Clock, Search, Upload, ChevronRight, Check, X, Menu, Bell, Settings, LogOut, Users, BarChart3, TrendingUp, Eye, Edit3, Trash2, Plus, ArrowLeft, Home, Folder, AlertTriangle, CheckCircle, AlertCircle, Info, Send, Printer, Download, Star, Zap, Lock, Globe, MessageSquare, Phone, Mail, MapPin, Calendar, ChevronDown, ChevronUp, Filter, RefreshCw, Award, Heart, ExternalLink, Cookie, BookOpen, Scale, CreditCard, UserPlus, PieChart, Activity, Layers, Target, ArrowRight, Sparkles, Bot, Camera, Image, FileUp, File } from "lucide-react";
 
 // ============================================
@@ -1913,33 +1913,160 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
 function AdminPage() {
   const [tab, setTab] = useState("overview");
   const [searchTerm, setSearchTerm] = useState("");
-  const filtered = demoUsers.filter(u => u.name.toLowerCase().includes(searchTerm.toLowerCase()) || u.email.toLowerCase().includes(searchTerm.toLowerCase()));
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // ── Read REAL data from localStorage ──
+  const realData = React.useMemo(() => {
+    const users = [];
+    const allProjects = [];
+    let totalAnalyses = 0;
+    const planCounts = { free: 0, plus: 0, pro: 0, business: 0 };
+    const currentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+    let analysesThisMonth = 0;
+    let mrr = 0;
+    const planPrices = { free: 0, plus: 4.99, pro: 9.99, business: 29.99 };
+
+    try {
+      // Find all user emails from localStorage keys
+      const userEmails = new Set();
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        const m = key?.match(/^kb_(.+?)_(profile|projects|usage)$/);
+        if (m && m[1] !== "anon") userEmails.add(m[1]);
+      }
+
+      userEmails.forEach(email => {
+        try {
+          const profile = JSON.parse(localStorage.getItem(`kb_${email}_profile`) || "{}");
+          const projects = JSON.parse(localStorage.getItem(`kb_${email}_projects`) || "[]");
+          const usage = JSON.parse(localStorage.getItem(`kb_${email}_usage`) || "{}");
+          const totalUsage = Object.values(usage).reduce((s, v) => s + (v || 0), 0);
+          const monthUsage = usage[currentMonth] || 0;
+          const plan = profile.plan || "free";
+
+          users.push({
+            email,
+            name: `${profile.vorname || ""} ${profile.nachname || ""}`.trim() || email.split("@")[0],
+            plan,
+            projects: projects.length,
+            analyses: totalUsage,
+            analysesThisMonth: monthUsage,
+            registered: profile.planStart || "—",
+            has2FA: !!JSON.parse(localStorage.getItem(`kb_2fa_${email}`) || "{}").enabled,
+          });
+
+          allProjects.push(...projects);
+          totalAnalyses += totalUsage;
+          analysesThisMonth += monthUsage;
+          planCounts[plan] = (planCounts[plan] || 0) + 1;
+          mrr += planPrices[plan] || 0;
+        } catch {}
+      });
+    } catch (e) { console.warn("Admin data read error:", e); }
+
+    return { users, allProjects, totalAnalyses, planCounts, analysesThisMonth, mrr, currentMonth };
+  }, [refreshKey]);
+
+  const totalUsers = realData.users.length;
+  const totalProjects = realData.allProjects.length;
+  const filtered = realData.users.filter(u => u.name.toLowerCase().includes(searchTerm.toLowerCase()) || u.email.toLowerCase().includes(searchTerm.toLowerCase()));
+  const conversionRate = totalUsers > 0 ? ((totalUsers - (realData.planCounts.free || 0)) / totalUsers * 100).toFixed(1) : "0.0";
+
+  const handleResetAll = () => {
+    if (!confirm("WARNUNG: Alle Statistiken, Projekte und Nutzungsdaten ALLER Nutzer werden zurückgesetzt. Fortfahren?")) return;
+    if (!confirm("Wirklich sicher? Diese Aktion kann nicht rückgängig gemacht werden.")) return;
+    const keysToDelete = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith("kb_") && (key.includes("_projects") || key.includes("_usage"))) keysToDelete.push(key);
+    }
+    keysToDelete.forEach(k => localStorage.removeItem(k));
+    alert(`${keysToDelete.length} Einträge gelöscht. Statistiken zurückgesetzt auf 0.`);
+    setRefreshKey(k => k + 1);
+  };
+
+  const handleDeleteUser = (email) => {
+    if (!confirm(`Nutzer ${email} und alle zugehörigen Daten wirklich löschen?`)) return;
+    const keysToDelete = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.includes(email)) keysToDelete.push(key);
+    }
+    keysToDelete.forEach(k => localStorage.removeItem(k));
+    setRefreshKey(k => k + 1);
+  };
+
   return <div style={{ padding: "32px 20px", maxWidth: 1200, margin: "0 auto" }}>
-    <div style={{ marginBottom: 32 }}><h1 style={{ fontSize: 28, fontWeight: 800, color: brand.text, margin: "0 0 4px" }}>Admin-Dashboard</h1><p style={{ fontSize: 15, color: brand.textMuted, margin: 0 }}>Übersicht und Verwaltung</p></div>
+    <div style={{ marginBottom: 32, display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+      <div>
+        <h1 style={{ fontSize: 28, fontWeight: 800, color: brand.text, margin: "0 0 4px" }}>Admin-Dashboard</h1>
+        <p style={{ fontSize: 15, color: brand.textMuted, margin: 0 }}>Echtzeit-Daten aus dem lokalen Speicher</p>
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <Btn variant="outline" size="sm" onClick={() => setRefreshKey(k => k + 1)}><RefreshCw size={14} /> Aktualisieren</Btn>
+        <Btn variant="danger" size="sm" onClick={handleResetAll}><Trash2 size={14} /> Alles zurücksetzen</Btn>
+      </div>
+    </div>
     <div style={{ display: "flex", gap: 4, marginBottom: 32, overflowX: "auto" }}>
       {[["overview","Übersicht"],["users","Nutzer"],["system","System"]].map(([id, l]) => <button key={id} onClick={() => setTab(id)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: tab === id ? brand.primary : "transparent", color: tab === id ? "#fff" : brand.textMuted, fontWeight: 600, fontSize: 14, cursor: "pointer", whiteSpace: "nowrap", fontFamily: "inherit" }}>{l}</button>)}
     </div>
+
     {tab === "overview" && <>
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 32 }}>
-        <StatCard icon={Users} label="Gesamtnutzer" value="12.847" change={14} color={brand.primary} />
-        <StatCard icon={TrendingUp} label="MRR" value="32.450€" change={22} color={brand.success} />
-        <StatCard icon={Activity} label="Analysen heute" value="1.293" change={8} color={brand.info} />
-        <StatCard icon={Target} label="Conversion" value="5.2%" change={3} color={brand.accent} />
+        <StatCard icon={Users} label="Gesamtnutzer" value={totalUsers.toString()} color={brand.primary} />
+        <StatCard icon={TrendingUp} label="MRR" value={`${realData.mrr.toFixed(2)}€`} color={brand.success} />
+        <StatCard icon={Activity} label="Analysen (Monat)" value={realData.analysesThisMonth.toString()} color={brand.info} />
+        <StatCard icon={Target} label="Conversion" value={`${conversionRate}%`} color={brand.accent} />
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 24 }}>
-        <Card><h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>Abo-Verteilung</h3><div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 16 }}>{[["Free",8240,64],["Plus",3420,27],["Pro",987,8],["Business",200,1]].map(([n,c,p]) => <div key={n}><div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, marginBottom: 4 }}><span style={{ fontWeight: 600, color: brand.text }}>{n}</span><span style={{ color: brand.textMuted }}>{c.toLocaleString()} ({p}%)</span></div><div style={{ height: 8, borderRadius: 4, background: brand.borderLight }}><div style={{ height: "100%", borderRadius: 4, background: brand.primary, width: `${p}%` }} /></div></div>)}</div></Card>
-        <Card><h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>Upload-Methoden</h3><div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 16 }}>{[["📸 Foto/Kamera",45],["📄 PDF Upload",32],["📝 Text-Eingabe",18],["📂 Drag & Drop",5]].map(([n,p]) => <div key={n}><div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, marginBottom: 4 }}><span style={{ fontWeight: 600, color: brand.text }}>{n}</span><span style={{ color: brand.textMuted }}>{p}%</span></div><div style={{ height: 8, borderRadius: 4, background: brand.borderLight }}><div style={{ height: "100%", borderRadius: 4, background: brand.accent, width: `${p}%` }} /></div></div>)}</div></Card>
-        <Card><h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>Letzte Aktivität</h3><div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16 }}>{[{t:"2 Min.",a:"Foto analysiert",d:"Steuerbescheid"},{t:"8 Min.",a:"PDF Upload",d:"Nebenkostenabrechnung"},{t:"15 Min.",a:"Registrierung",d:"kerem@gmail.com"},{t:"23 Min.",a:"Brief erstellt",d:"Widerspruch"},{t:"31 Min.",a:"Upgrade→Plus",d:"lisa.b@outlook.de"}].map((a,i) => <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: `1px solid ${brand.borderLight}` }}><span style={{ fontSize: 12, color: brand.textMuted, width: 60, flexShrink: 0 }}>{a.t}</span><div><div style={{ fontSize: 14, fontWeight: 600, color: brand.text }}>{a.a}</div><div style={{ fontSize: 12, color: brand.textMuted }}>{a.d}</div></div></div>)}</div></Card>
+        <Card>
+          <h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>Abo-Verteilung</h3>
+          {totalUsers === 0 ? <p style={{ color: brand.textMuted, fontSize: 14, marginTop: 16 }}>Noch keine Nutzer registriert.</p> :
+          <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 16 }}>
+            {[["Free","free"],["Plus","plus"],["Pro","pro"],["Business","business"]].map(([n, key]) => {
+              const c = realData.planCounts[key] || 0;
+              const p = totalUsers > 0 ? Math.round((c / totalUsers) * 100) : 0;
+              return <div key={n}><div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, marginBottom: 4 }}><span style={{ fontWeight: 600, color: brand.text }}>{n}</span><span style={{ color: brand.textMuted }}>{c} ({p}%)</span></div><div style={{ height: 8, borderRadius: 4, background: brand.borderLight }}><div style={{ height: "100%", borderRadius: 4, background: brand.primary, width: `${p}%`, transition: "width 0.4s" }} /></div></div>;
+            })}
+          </div>}
+        </Card>
+        <Card>
+          <h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>Gesamt-Statistik</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 16 }}>
+            {[["Projekte gesamt", totalProjects],["Analysen gesamt", realData.totalAnalyses],["Analysen diesen Monat", realData.analysesThisMonth],["Aktive Abos", totalUsers - (realData.planCounts.free || 0)]].map(([l, v]) => <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: `1px solid ${brand.borderLight}` }}><span style={{ fontSize: 14, color: brand.textMuted }}>{l}</span><span style={{ fontSize: 18, fontWeight: 800, color: brand.primary }}>{v}</span></div>)}
+          </div>
+        </Card>
+        <Card>
+          <h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>Sicherheit</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: `1px solid ${brand.borderLight}` }}><span style={{ fontSize: 14, color: brand.textMuted }}>Nutzer mit 2FA</span><span style={{ fontSize: 18, fontWeight: 800, color: brand.success }}>{realData.users.filter(u => u.has2FA).length} / {totalUsers}</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: `1px solid ${brand.borderLight}` }}><span style={{ fontSize: 14, color: brand.textMuted }}>2FA-Quote</span><span style={{ fontSize: 18, fontWeight: 800, color: brand.text }}>{totalUsers > 0 ? Math.round((realData.users.filter(u => u.has2FA).length / totalUsers) * 100) : 0}%</span></div>
+          </div>
+        </Card>
       </div>
     </>}
+
     {tab === "users" && <>
-      <Card style={{ marginBottom: 24 }}><div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}><Input value={searchTerm} onChange={setSearchTerm} placeholder="Nutzer suchen..." icon={Search} style={{ flex: 1, minWidth: 200, marginBottom: 0 }} /><Btn variant="outline" size="sm"><Filter size={14} /> Filter</Btn><Btn variant="outline" size="sm"><Download size={14} /> Export</Btn></div></Card>
-      <Card style={{ padding: 0, overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}><thead><tr style={{ background: brand.bgMuted }}>{["Name","E-Mail","Plan","Projekte","Analysen","Login",""].map(h => <th key={h} style={{ padding: "14px 16px", textAlign: "left", fontWeight: 700, color: brand.text, borderBottom: `2px solid ${brand.borderLight}` }}>{h}</th>)}</tr></thead><tbody>{filtered.map(u => <tr key={u.id} style={{ borderBottom: `1px solid ${brand.borderLight}` }}><td style={{ padding: "14px 16px", fontWeight: 600 }}>{u.name}</td><td style={{ padding: "14px 16px", color: brand.textMuted }}>{u.email}</td><td style={{ padding: "14px 16px" }}><Badge color={u.plan === "pro" ? brand.accent : u.plan === "plus" ? brand.primary : brand.textMuted} bg={u.plan === "pro" ? `${brand.accent}15` : u.plan === "plus" ? brand.bgMuted : `${brand.textMuted}10`}>{u.plan.toUpperCase()}</Badge></td><td style={{ padding: "14px 16px" }}>{u.projects}</td><td style={{ padding: "14px 16px" }}>{u.analyses}</td><td style={{ padding: "14px 16px", color: brand.textMuted }}>{u.lastLogin}</td><td style={{ padding: "14px 16px" }}><div style={{ display: "flex", gap: 8 }}><button style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Eye size={16} color={brand.textMuted} /></button><button style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Trash2 size={16} color={brand.danger} /></button></div></td></tr>)}</tbody></table></div></Card>
+      <Card style={{ marginBottom: 24 }}><div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}><Input value={searchTerm} onChange={setSearchTerm} placeholder="Nutzer suchen..." icon={Search} style={{ flex: 1, minWidth: 200, marginBottom: 0 }} /></div></Card>
+      {filtered.length === 0 ? <Card style={{ textAlign: "center", padding: 48 }}><Users size={40} style={{ color: brand.borderLight, marginBottom: 12 }} /><p style={{ color: brand.textMuted, margin: 0 }}>{totalUsers === 0 ? "Noch keine Nutzer registriert." : "Keine Treffer."}</p></Card> :
+      <Card style={{ padding: 0, overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+        <thead><tr style={{ background: brand.bgMuted }}>{["Name","E-Mail","Plan","Projekte","Analysen","2FA",""].map(h => <th key={h} style={{ padding: "14px 16px", textAlign: "left", fontWeight: 700, color: brand.text, borderBottom: `2px solid ${brand.borderLight}` }}>{h}</th>)}</tr></thead>
+        <tbody>{filtered.map(u => <tr key={u.email} style={{ borderBottom: `1px solid ${brand.borderLight}` }}>
+          <td style={{ padding: "14px 16px", fontWeight: 600 }}>{u.name}</td>
+          <td style={{ padding: "14px 16px", color: brand.textMuted }}>{u.email}</td>
+          <td style={{ padding: "14px 16px" }}><Badge color={u.plan === "pro" ? brand.accent : u.plan === "plus" ? brand.primary : brand.textMuted} bg={u.plan === "pro" ? `${brand.accent}15` : u.plan === "plus" ? brand.bgMuted : `${brand.textMuted}10`}>{u.plan.toUpperCase()}</Badge></td>
+          <td style={{ padding: "14px 16px" }}>{u.projects}</td>
+          <td style={{ padding: "14px 16px" }}>{u.analyses} <span style={{ color: brand.textMuted, fontSize: 12 }}>({u.analysesThisMonth} Mo.)</span></td>
+          <td style={{ padding: "14px 16px" }}>{u.has2FA ? <Shield size={16} color={brand.success} /> : <span style={{ color: brand.textMuted, fontSize: 12 }}>—</span>}</td>
+          <td style={{ padding: "14px 16px" }}><button onClick={() => handleDeleteUser(u.email)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Trash2 size={16} color={brand.danger} /></button></td>
+        </tr>)}</tbody>
+      </table></div></Card>}
     </>}
+
     {tab === "system" && <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 24 }}>
-      <Card><h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>API-Kosten</h3><div style={{ fontSize: 32, fontWeight: 800, color: brand.primary, margin: "12px 0" }}>847,50€</div><p style={{ fontSize: 14, color: brand.textMuted, margin: 0 }}>Aktueller Monat · ∅ 0,066€/Analyse</p></Card>
-      <Card><h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>System-Status</h3><div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>{[["API","Online"],["DB","Online"],["Payments","Online"],["Vision OCR","Online"]].map(([s,st]) => <div key={s} style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}><span style={{ fontWeight: 600 }}>{s}</span><span style={{ display: "flex", alignItems: "center", gap: 6, color: brand.success, fontWeight: 600 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: brand.success }} />{st}</span></div>)}</div></Card>
-      <Card><h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>Performance</h3><div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>{[["Ø Analysezeit","2.3s"],["Ø OCR-Zeit","1.8s"],["Uptime","99.97%"],["Fehlerrate","0.02%"]].map(([l,v]) => <div key={l} style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}><span style={{ color: brand.textMuted }}>{l}</span><span style={{ fontWeight: 700 }}>{v}</span></div>)}</div></Card>
+      <Card><h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>API-Kosten (geschätzt)</h3><div style={{ fontSize: 32, fontWeight: 800, color: brand.primary, margin: "12px 0" }}>{(realData.analysesThisMonth * 0.066).toFixed(2)}€</div><p style={{ fontSize: 14, color: brand.textMuted, margin: 0 }}>Aktueller Monat · ∅ 0,066€/Analyse</p></Card>
+      <Card><h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>System-Status</h3><div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>{[["Frontend","Online"],["Anthropic API","Online"],["Mollie API","Online"],["Storage","Online"]].map(([s,st]) => <div key={s} style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}><span style={{ fontWeight: 600 }}>{s}</span><span style={{ display: "flex", alignItems: "center", gap: 6, color: brand.success, fontWeight: 600 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: brand.success }} />{st}</span></div>)}</div></Card>
+      <Card><h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>Storage-Nutzung</h3><div style={{ fontSize: 32, fontWeight: 800, color: brand.primary, margin: "12px 0" }}>{(JSON.stringify(localStorage).length / 1024).toFixed(1)} KB</div><p style={{ fontSize: 14, color: brand.textMuted, margin: 0 }}>{localStorage.length} Einträge im LocalStorage</p></Card>
     </div>}
   </div>;
 }

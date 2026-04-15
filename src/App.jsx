@@ -1399,6 +1399,10 @@ function DashboardPage({ user, setUser, setPage }) {
   const [fileData, setFileData] = useState(null);
   const [editorIntent, setEditorIntent] = useState(""); const [editorTone, setEditorTone] = useState("sachlich"); const [editorResult, setEditorResult] = useState(""); const [editorLoading, setEditorLoading] = useState(false);
   const [editorAktenzeichen, setEditorAktenzeichen] = useState("");
+  const [editMode, setEditMode] = useState(false);
+  const [refineInstruction, setRefineInstruction] = useState("");
+  const [refineLoading, setRefineLoading] = useState(false);
+  const [letterSaved, setLetterSaved] = useState(false);
   const [showDocument, setShowDocument] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -1567,10 +1571,64 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
       });
       const data = await resp.json();
       setEditorResult(data.content?.[0]?.text || "Brief konnte nicht generiert werden.");
+      setLetterSaved(false);
     } catch {
       setEditorResult(`${senderBlock}\n\n${empfaenger}\n\n${datum}\n${akz ? "Ihr Zeichen: " + akz + "\n" : ""}\n**Betreff: ${editorIntent}**\n\nSehr geehrte Damen und Herren,\n\nhiermit möchte ich ${editorIntent.toLowerCase()}.\n\nIch bitte um Bearbeitung innerhalb von 14 Tagen.\n\nMit freundlichen Grüßen\n\n${fullName}`);
+      setLetterSaved(false);
     }
     setEditorLoading(false);
+  };
+
+  const handleRefineLetter = async () => {
+    if (!refineInstruction.trim() || !editorResult) return;
+    setRefineLoading(true);
+    const sysPrompt = `Du bist KlarBrief24, ein professioneller Briefgenerator. Du bekommst einen bestehenden Brief und eine Änderungsanweisung. Gib den überarbeiteten Brief im gleichen DIN-5008-Format zurück. NUR den fertigen Brieftext, kein Markdown außer **Betreff:**, keine Erklärungen.`;
+    try {
+      const resp = await fetch("/api/anthropic", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: 1500, system: sysPrompt,
+          messages: [{ role: "user", content: `Hier ist der bestehende Brief:\n\n${editorResult}\n\n---\n\nÄnderungswunsch: ${refineInstruction}\n\nGib den überarbeiteten Brief zurück.` }] })
+      });
+      const data = await resp.json();
+      const newText = data.content?.[0]?.text;
+      if (newText) {
+        setEditorResult(newText);
+        setRefineInstruction("");
+        setLetterSaved(false);
+      }
+    } catch (e) { alert("Fehler bei der Überarbeitung. Bitte versuche es erneut."); }
+    setRefineLoading(false);
+  };
+
+  const handleSaveLetterToProject = async () => {
+    if (!editorResult || !activeProject) return;
+    // Extract betreff from letter (looks for "**Betreff:" or "Betreff:")
+    const betreffMatch = editorResult.match(/\*?\*?Betreff:\*?\*?\s*([^\n]+)/i);
+    const betreff = betreffMatch ? betreffMatch[1].replace(/\*+/g, "").trim() : `Antwort an ${activeProject.behoerde}`;
+
+    const newLetter = {
+      id: Date.now(),
+      date: new Date().toLocaleDateString("de-DE"),
+      direction: "ausgehend",
+      type: "Antwortschreiben",
+      summary: editorResult.substring(0, 200) + (editorResult.length > 200 ? "..." : ""),
+      betreff,
+      letterText: editorResult,
+      analyzed: false,
+      document: null,
+      originalText: null,
+    };
+
+    const updatedLetters = [...activeProject.letters, newLetter];
+    const updatedProject = { ...activeProject, letters: updatedLetters };
+    setProjects(projects.map(p => p.id === activeProject.id ? updatedProject : p));
+    setActiveProject(updatedProject);
+
+    if (user?.id) {
+      // Strip base64 from existing letters for DB
+      const dbLetters = updatedLetters.map(l => ({ ...l, document: l.document ? { mediaType: l.document.mediaType, isImage: l.document.isImage, isPdf: l.document.isPdf, fileName: l.document.fileName } : null }));
+      try { await dbUpdateProject(activeProject.id, { letters: dbLetters }); } catch (e) { console.warn("Save letter failed:", e); }
+    }
+    setLetterSaved(true);
   };
 
   const [savedToProject, setSavedToProject] = useState(null);
@@ -1957,27 +2015,67 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
         <div key={l.id} style={{ position: "relative", marginBottom: 20 }}>
           <div style={{ position: "absolute", left: -32, top: 4, width: 24, height: 24, borderRadius: "50%", background: l.direction === "eingehend" ? brand.info : brand.success, display: "flex", alignItems: "center", justifyContent: "center" }}>{l.direction === "eingehend" ? <Download size={12} color="#fff" /> : <Send size={12} color="#fff" />}</div>
           <Card><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}><div style={{ display: "flex", gap: 6 }}><Badge color={l.direction === "eingehend" ? brand.info : brand.success} bg={l.direction === "eingehend" ? `${brand.info}15` : `${brand.success}15`}>{l.direction === "eingehend" ? "Eingehend" : "Ausgehend"}</Badge><Badge color="#8b5cf6" bg="#8b5cf610">{l.type}</Badge></div><span style={{ fontSize: 13, color: brand.textMuted }}>{l.date}</span></div><h4 style={{ fontSize: 16, fontWeight: 700, color: brand.text, margin: "0 0 6px" }}>{l.betreff || l.type}</h4><p style={{ fontSize: 14, color: brand.textMuted, lineHeight: 1.6, margin: "0 0 8px" }}>{l.summary}</p>
-            {l.document && <button onClick={(e) => { e.stopPropagation(); setShowDocument(l.document); }} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 6, border: `1px solid ${brand.borderLight}`, background: brand.bgMuted, color: brand.primary, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{l.document.isImage ? <Image size={13} /> : <File size={13} />} {l.document.fileName || "Dokument anzeigen"}</button>}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {l.document && <button onClick={(e) => { e.stopPropagation(); setShowDocument(l.document); }} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 6, border: `1px solid ${brand.borderLight}`, background: brand.bgMuted, color: brand.primary, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{l.document.isImage ? <Image size={13} /> : <File size={13} />} {l.document.fileName || "Dokument anzeigen"}</button>}
+              {l.letterText && <button onClick={(e) => { e.stopPropagation(); setEditorResult(l.letterText); setEditorIntent(""); setEditorAktenzeichen(activeProject.aktenzeichen || ""); setLetterSaved(true); setEditMode(false); setShowEditor(true); }} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 6, border: `1px solid ${brand.success}30`, background: `${brand.success}08`, color: brand.success, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}><Eye size={13} /> Brief anzeigen / bearbeiten</button>}
+            </div>
           </Card>
         </div>
       ))}
     </div>
     {activeProject.letters.length === 0 && <Card style={{ textAlign: "center", padding: 40 }}><Camera size={40} style={{ color: brand.borderLight, marginBottom: 12 }} /><p style={{ color: brand.textMuted }}>Noch keine Briefe. Lade den ersten Brief hoch!</p></Card>}
-    <Modal open={showEditor} onClose={() => { setShowEditor(false); setEditorResult(""); setEditorIntent(""); }} title="Professionellen Antwortbrief erstellen (DIN 5008)" wide>
+    <Modal open={showEditor} onClose={() => { setShowEditor(false); setEditorResult(""); setEditorIntent(""); setEditMode(false); setRefineInstruction(""); setLetterSaved(false); }} title="Professionellen Antwortbrief erstellen (DIN 5008)" wide>
       {!profile.strasse && <div style={{ padding: 12, borderRadius: 8, background: `${brand.warning}08`, border: `1px solid ${brand.warning}25`, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><AlertTriangle size={16} style={{ color: brand.warning }} /><span style={{ fontSize: 13, color: brand.accentHover }}>Absender fehlt! <span style={{ textDecoration: "underline", cursor: "pointer" }} onClick={() => { setShowEditor(false); setView("settings"); }}>Einstellungen öffnen</span></span></div>}
-      <Input label="Aktenzeichen / Geschäftszeichen" value={editorAktenzeichen} onChange={setEditorAktenzeichen} placeholder="z.B. 205/12345/2026" icon={FileText} />
-      <Input label="Dein Anliegen (so detailliert wie möglich)" textarea value={editorIntent} onChange={setEditorIntent} placeholder="z.B. Einspruch gegen den Steuerbescheid — Werbungskosten in Höhe von 2.340€ wurden nicht berücksichtigt. Belege liegen bei." />
-      <div style={{ marginBottom: 16 }}><label style={{ display: "block", marginBottom: 6, fontSize: 14, fontWeight: 600 }}>Ton:</label><div style={{ display: "flex", gap: 8 }}>{[["sachlich","Sachlich & formal"],["fordernd","Bestimmt & fordernd"],["freundlich","Freundlich & kooperativ"]].map(([t,l]) => <button key={t} onClick={() => setEditorTone(t)} style={{ padding: "8px 14px", borderRadius: 8, border: `1.5px solid ${editorTone === t ? brand.primary : brand.borderLight}`, background: editorTone === t ? brand.bgMuted : "#fff", color: editorTone === t ? brand.primary : brand.textMuted, fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{l}</button>)}</div></div>
-      <div style={{ padding: 12, borderRadius: 8, background: brand.bgMuted, marginBottom: 16, fontSize: 13, color: brand.textMuted }}>
-        <strong style={{ color: brand.text }}>Absender:</strong> {fullName}{fullAddress ? `, ${profile.strasse}, ${profile.plz} ${profile.ort}` : " (nicht hinterlegt)"} · <strong style={{ color: brand.text }}>An:</strong> {activeProject?.behoerde || "—"} · <strong style={{ color: brand.text }}>Format:</strong> DIN 5008 mit Rechtsverweisen
-      </div>
-      <Btn onClick={handleGenerateLetter} style={{ width: "100%" }}>{editorLoading ? <><RefreshCw size={16} style={{ animation: "spin 1s linear infinite" }} /> Wird erstellt...</> : <><Scale size={16} /> Brief generieren (DIN 5008)</>}</Btn>
-      {editorResult && <div style={{ marginTop: 20 }}>
-        <div style={{ padding: 28, background: "#fff", border: `1px solid ${brand.borderLight}`, borderRadius: 4, fontFamily: "'Courier New', monospace", fontSize: 13, lineHeight: 1.9, whiteSpace: "pre-wrap", color: brand.text, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>{editorResult}</div>
+      {!editorResult && <>
+        <Input label="Aktenzeichen / Geschäftszeichen" value={editorAktenzeichen} onChange={setEditorAktenzeichen} placeholder="z.B. 205/12345/2026" icon={FileText} />
+        <Input label="Dein Anliegen (so detailliert wie möglich)" textarea value={editorIntent} onChange={setEditorIntent} placeholder="z.B. Einspruch gegen den Steuerbescheid — Werbungskosten in Höhe von 2.340€ wurden nicht berücksichtigt. Belege liegen bei." />
+        <div style={{ marginBottom: 16 }}><label style={{ display: "block", marginBottom: 6, fontSize: 14, fontWeight: 600 }}>Ton:</label><div style={{ display: "flex", gap: 8 }}>{[["sachlich","Sachlich & formal"],["fordernd","Bestimmt & fordernd"],["freundlich","Freundlich & kooperativ"]].map(([t,l]) => <button key={t} onClick={() => setEditorTone(t)} style={{ padding: "8px 14px", borderRadius: 8, border: `1.5px solid ${editorTone === t ? brand.primary : brand.borderLight}`, background: editorTone === t ? brand.bgMuted : "#fff", color: editorTone === t ? brand.primary : brand.textMuted, fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{l}</button>)}</div></div>
+        <div style={{ padding: 12, borderRadius: 8, background: brand.bgMuted, marginBottom: 16, fontSize: 13, color: brand.textMuted }}>
+          <strong style={{ color: brand.text }}>Absender:</strong> {fullName}{fullAddress ? `, ${profile.strasse}, ${profile.plz} ${profile.ort}` : " (nicht hinterlegt)"} · <strong style={{ color: brand.text }}>An:</strong> {activeProject?.behoerde || "—"} · <strong style={{ color: brand.text }}>Format:</strong> DIN 5008 mit Rechtsverweisen
+        </div>
+        <Btn onClick={handleGenerateLetter} style={{ width: "100%" }}>{editorLoading ? <><RefreshCw size={16} style={{ animation: "spin 1s linear infinite" }} /> Wird erstellt...</> : <><Scale size={16} /> Brief generieren (DIN 5008)</>}</Btn>
+      </>}
+
+      {editorResult && <div>
+        {/* Status badge */}
+        {letterSaved && <div style={{ padding: 12, borderRadius: 8, background: `${brand.success}08`, border: `1px solid ${brand.success}30`, marginBottom: 12, display: "flex", alignItems: "center", gap: 10 }}>
+          <CheckCircle size={18} style={{ color: brand.success }} />
+          <span style={{ fontSize: 14, fontWeight: 600, color: brand.success }}>Brief im Projekt "{activeProject?.name}" gespeichert</span>
+        </div>}
+
+        {/* Editor or Preview */}
+        {editMode ? (
+          <textarea value={editorResult} onChange={e => { setEditorResult(e.target.value); setLetterSaved(false); }}
+            style={{ width: "100%", minHeight: 500, padding: 28, background: "#fff", border: `2px solid ${brand.primary}`, borderRadius: 4, fontFamily: "'Courier New', monospace", fontSize: 13, lineHeight: 1.9, color: brand.text, outline: "none", resize: "vertical", fontWeight: "normal" }} />
+        ) : (
+          <div style={{ padding: 28, background: "#fff", border: `1px solid ${brand.borderLight}`, borderRadius: 4, fontFamily: "'Courier New', monospace", fontSize: 13, lineHeight: 1.9, whiteSpace: "pre-wrap", color: brand.text, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>{editorResult}</div>
+        )}
+
+        {/* KI Refinement Box */}
+        {!editMode && <div style={{ marginTop: 16, padding: 16, borderRadius: 12, background: `${brand.accent}06`, border: `1px solid ${brand.accent}25` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <Sparkles size={16} style={{ color: brand.accent }} />
+            <span style={{ fontSize: 14, fontWeight: 700, color: brand.text }}>Per KI anpassen</span>
+          </div>
+          <Input value={refineInstruction} onChange={setRefineInstruction} textarea
+            placeholder="z.B. 'Mach den Ton etwas freundlicher' oder 'Füge einen Hinweis auf § 355 BGB hinzu' oder 'Verkürze den Brief um die Hälfte'" />
+          <Btn variant="accent" size="sm" onClick={handleRefineLetter} disabled={refineLoading || !refineInstruction.trim()} style={{ marginTop: 4 }}>
+            {refineLoading ? <><RefreshCw size={14} style={{ animation: "spin 1s linear infinite" }} /> Überarbeite...</> : <><Sparkles size={14} /> Brief anpassen</>}
+          </Btn>
+        </div>}
+
+        {/* Action Buttons */}
         <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
-          <Btn variant="accent" onClick={() => window.print()}><Printer size={14} /> Drucken</Btn>
-          <Btn variant="outline" onClick={() => { const b = new Blob([editorResult], { type: "text/plain;charset=utf-8" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = `Brief_${activeProject?.name?.replace(/\s/g,"_") || "Antwort"}_${new Date().toISOString().split("T")[0]}.txt`; a.click(); }}><Download size={14} /> Speichern</Btn>
-          <Btn variant="ghost" onClick={() => { navigator.clipboard?.writeText(editorResult); alert("Kopiert!"); }}><FileText size={14} /> Kopieren</Btn>
+          <Btn variant={editMode ? "primary" : "outline"} size="sm" onClick={() => setEditMode(!editMode)}>
+            <Edit3 size={14} /> {editMode ? "Bearbeitung abschließen" : "Manuell bearbeiten"}
+          </Btn>
+          {!letterSaved && <Btn variant="primary" size="sm" onClick={handleSaveLetterToProject}>
+            <CheckCircle size={14} /> Im Projekt speichern
+          </Btn>}
+          <Btn variant="accent" size="sm" onClick={() => window.print()}><Printer size={14} /> Drucken</Btn>
+          <Btn variant="outline" size="sm" onClick={() => { const b = new Blob([editorResult], { type: "text/plain;charset=utf-8" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = `Brief_${activeProject?.name?.replace(/\s/g,"_") || "Antwort"}_${new Date().toISOString().split("T")[0]}.txt`; a.click(); }}><Download size={14} /> Datei</Btn>
+          <Btn variant="ghost" size="sm" onClick={() => { navigator.clipboard?.writeText(editorResult); alert("Kopiert!"); }}><FileText size={14} /> Kopieren</Btn>
+          <Btn variant="ghost" size="sm" onClick={() => { setEditorResult(""); setEditorIntent(""); setEditMode(false); setLetterSaved(false); }}>Neuen Brief</Btn>
         </div>
       </div>}
     </Modal>

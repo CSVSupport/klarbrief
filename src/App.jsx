@@ -1625,14 +1625,22 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
 
   const handleAnalyze = async () => {
     if (!analyzeText.trim() && !fileData) return;
-    // Check plan limit
     if (!canAnalyze) { setShowUpgrade(true); return; }
     setAnalyzing(true); setSavedToProject(null);
-    const result = await analyzeWithAI(analyzeText, fileData);
+
+    let result;
+    try {
+      result = await analyzeWithAI(analyzeText, fileData);
+    } catch (e) {
+      console.error("Analysis failed:", e);
+      result = null;
+    }
     setAnalyzeResult(result);
 
     if (result) {
-      await incrementUsage(); // Count this analysis
+      // Increment usage (don't let failure stop project creation)
+      try { await incrementUsage(); } catch (e) { console.warn("Usage tracking failed:", e); }
+
       const nl = {
         id: Date.now(), date: new Date().toLocaleDateString("de-DE"), direction: "eingehend",
         type: result.dokumenttyp || result.kategorie || "Brief", summary: result.klartext, analyzed: true,
@@ -1640,58 +1648,58 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
         document: fileData ? { base64: fileData.base64, mediaType: fileData.mediaType, isImage: fileData.isImage, isPdf: fileData.isPdf, fileName: fileData.fileName || "Dokument" } : null,
         originalText: analyzeText || null,
       };
-      // DB-safe version: strip base64 (too large for JSONB)
       const nlForDb = { ...nl, document: nl.document ? { mediaType: nl.document.mediaType, isImage: nl.document.isImage, isPdf: nl.document.isPdf, fileName: nl.document.fileName } : null };
 
-      if (activeProject) {
-        // Inside a project → add to this project
-        const stateFields = { letters: [...activeProject.letters, nl], ampel: result.ampel, frist: result.frist || activeProject.frist, behoerde: result.behoerde || activeProject.behoerde, aktenzeichen: result.aktenzeichen || activeProject.aktenzeichen || "", referenzen: [...(activeProject.referenzen || []), ...(result.referenzen || [])].filter((v, i, a) => a.indexOf(v) === i) };
-        const dbFields = { ...stateFields, letters: [...(activeProject.letters || []).map(l => ({ ...l, document: l.document ? { mediaType: l.document.mediaType, isImage: l.document.isImage, isPdf: l.document.isPdf, fileName: l.document.fileName } : null })), nlForDb] };
-        setProjects(projects.map(p => p.id === activeProject.id ? { ...p, ...stateFields } : p));
-        setActiveProject(prev => ({ ...prev, ...stateFields }));
-        setSavedToProject(activeProject);
-        if (user?.id) { try { await dbUpdateProject(activeProject.id, dbFields); } catch (e) { console.error("Save failed:", e); } }
-      } else {
-        // Smart matching: find existing project or create new
-        const match = findMatchingProject(result);
-        if (match) {
-          const stateFields = { letters: [...match.letters, nl], ampel: result.ampel, frist: result.frist || match.frist, behoerde: result.behoerde || match.behoerde, aktenzeichen: result.aktenzeichen || match.aktenzeichen || "", referenzen: [...(match.referenzen || []), ...(result.referenzen || [])].filter((v, i, a) => a.indexOf(v) === i) };
-          const dbFields = { ...stateFields, letters: [...(match.letters || []).map(l => ({ ...l, document: l.document ? { mediaType: l.document.mediaType, isImage: l.document.isImage, isPdf: l.document.isPdf, fileName: l.document.fileName } : null })), nlForDb] };
-          setProjects(projects.map(p => p.id === match.id ? { ...p, ...stateFields } : p));
-          setSavedToProject(match);
-          if (user?.id) { try { await dbUpdateProject(match.id, dbFields); } catch (e) { console.error("Save failed:", e); } }
+      try {
+        if (activeProject) {
+          const stateFields = { letters: [...activeProject.letters, nl], ampel: result.ampel, frist: result.frist || activeProject.frist, behoerde: result.behoerde || activeProject.behoerde, aktenzeichen: result.aktenzeichen || activeProject.aktenzeichen || "", referenzen: [...(activeProject.referenzen || []), ...(result.referenzen || [])].filter((v, i, a) => a.indexOf(v) === i) };
+          const dbFields = { ...stateFields, letters: [...(activeProject.letters || []).map(l => ({ ...l, document: l.document ? { mediaType: l.document.mediaType, isImage: l.document.isImage, isPdf: l.document.isPdf, fileName: l.document.fileName } : null })), nlForDb] };
+          setProjects(projects.map(p => p.id === activeProject.id ? { ...p, ...stateFields } : p));
+          setActiveProject(prev => ({ ...prev, ...stateFields }));
+          setSavedToProject(activeProject);
+          if (user?.id) { try { await dbUpdateProject(activeProject.id, dbFields); } catch (e) { console.warn("DB update failed:", e); } }
         } else {
-          // Create new project with AI-suggested name
-          const newProject = {
-            name: result.projektname || (result.betreff ? `${result.betreff}` : `${result.dokumenttyp || result.kategorie} — ${result.behoerde}`),
-            category: result.kategorie || "Sonstiges",
-            status: "offen", ampel: result.ampel || "gelb",
-            behoerde: result.behoerde || "Unbekannt",
-            frist: result.frist || null, aktenzeichen: result.aktenzeichen || "", referenzen: result.referenzen || [],
-            dokumenttyp: result.dokumenttyp || null,
-            letters: [nlForDb],
-          };
-          if (user?.id) {
-            const { data, error } = await dbCreateProject(user.id, newProject);
-            if (data) {
-              // Merge DB response with local base64 data for viewing
-              const saved = { ...data, referenzen: data.referenzen || [], letters: [nl] };
-              setProjects(prev => [saved, ...prev]);
-              setSavedToProject(saved);
-            } else {
-              console.error("Create failed:", error);
-              alert("Projekt konnte nicht gespeichert werden: " + (error?.message || "Unbekannter Fehler"));
-              // Still save locally
-              const local = { ...newProject, id: Date.now() + 1, letters: [nl] };
-              setProjects(prev => [local, ...prev]);
-              setSavedToProject(local);
-            }
+          const match = findMatchingProject(result);
+          if (match) {
+            const stateFields = { letters: [...match.letters, nl], ampel: result.ampel, frist: result.frist || match.frist, behoerde: result.behoerde || match.behoerde, aktenzeichen: result.aktenzeichen || match.aktenzeichen || "", referenzen: [...(match.referenzen || []), ...(result.referenzen || [])].filter((v, i, a) => a.indexOf(v) === i) };
+            const dbFields = { ...stateFields, letters: [...(match.letters || []).map(l => ({ ...l, document: l.document ? { mediaType: l.document.mediaType, isImage: l.document.isImage, isPdf: l.document.isPdf, fileName: l.document.fileName } : null })), nlForDb] };
+            setProjects(projects.map(p => p.id === match.id ? { ...p, ...stateFields } : p));
+            setSavedToProject(match);
+            if (user?.id) { try { await dbUpdateProject(match.id, dbFields); } catch (e) { console.warn("DB update failed:", e); } }
           } else {
-            const local = { ...newProject, id: Date.now() + 1, letters: [nl] };
-            setProjects(prev => [local, ...prev]);
-            setSavedToProject(local);
+            // Create new project
+            const newProject = {
+              name: result.projektname || (result.betreff ? `${result.betreff}` : `${result.dokumenttyp || result.kategorie} — ${result.behoerde}`),
+              category: result.kategorie || "Sonstiges",
+              status: "offen", ampel: result.ampel || "gelb",
+              behoerde: result.behoerde || "Unbekannt",
+              frist: result.frist || null, aktenzeichen: result.aktenzeichen || "", referenzen: result.referenzen || [],
+              dokumenttyp: result.dokumenttyp || null,
+              letters: [nlForDb],
+            };
+            let saved = null;
+            if (user?.id) {
+              try {
+                const { data, error } = await dbCreateProject(user.id, newProject);
+                if (data) {
+                  saved = { ...data, referenzen: data.referenzen || [], letters: [nl] };
+                } else {
+                  console.warn("DB create failed:", error);
+                }
+              } catch (e) { console.warn("DB create exception:", e); }
+            }
+            // Always save to state (from DB or locally)
+            if (!saved) { saved = { ...newProject, id: "local_" + Date.now(), letters: [nl] }; }
+            setProjects(prev => [saved, ...prev]);
+            setSavedToProject(saved);
           }
         }
+      } catch (e) {
+        console.error("Project save error:", e);
+        // Emergency fallback: still create a local project
+        const fallback = { id: "local_" + Date.now(), name: result.projektname || result.behoerde || "Neuer Vorgang", category: result.kategorie || "Sonstiges", status: "offen", ampel: result.ampel || "gelb", behoerde: result.behoerde || "Unbekannt", frist: null, aktenzeichen: "", referenzen: [], letters: [nl] };
+        setProjects(prev => [fallback, ...prev]);
+        setSavedToProject(fallback);
       }
     }
     setAnalyzing(false);

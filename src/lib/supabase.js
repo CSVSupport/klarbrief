@@ -59,13 +59,17 @@ export async function getProjects(userId) {
 }
 
 export async function createProject(userId, project) {
-  const { data, error } = await supabase.from('projects').insert([{ ...project, user_id: userId }]).select().single();
-  return { data, error };
+  try {
+    const { data, error } = await supabase.from('projects').insert([{ ...project, user_id: userId }]).select().single();
+    return { data, error };
+  } catch (e) { console.warn("createProject failed:", e); return { data: null, error: e }; }
 }
 
 export async function updateProject(projectId, updates) {
-  const { data, error } = await supabase.from('projects').update(updates).eq('id', projectId).select().single();
-  return { data, error };
+  try {
+    const { data, error } = await supabase.from('projects').update(updates).eq('id', projectId).select().single();
+    return { data, error };
+  } catch (e) { console.warn("updateProject failed:", e); return { data: null, error: e }; }
 }
 
 export async function deleteProject(projectId) {
@@ -80,14 +84,18 @@ export async function getUsageForMonth(userId, month) {
 }
 
 export async function incrementUsage(userId, month) {
-  // Upsert: insert or increment
-  const { data: existing } = await supabase.from('usage_tracking').select('count').eq('user_id', userId).eq('month', month).maybeSingle();
-  if (existing) {
-    const { error } = await supabase.from('usage_tracking').update({ count: existing.count + 1 }).eq('user_id', userId).eq('month', month);
-    return { error };
-  } else {
-    const { error } = await supabase.from('usage_tracking').insert([{ user_id: userId, month, count: 1 }]);
-    return { error };
+  try {
+    const { data: existing } = await supabase.from('usage_tracking').select('count').eq('user_id', userId).eq('month', month).maybeSingle();
+    if (existing) {
+      const { error } = await supabase.from('usage_tracking').update({ count: existing.count + 1 }).eq('user_id', userId).eq('month', month);
+      return { error };
+    } else {
+      const { error } = await supabase.from('usage_tracking').insert([{ user_id: userId, month, count: 1 }]);
+      return { error };
+    }
+  } catch (e) {
+    console.warn("incrementUsage failed:", e);
+    return { error: e };
   }
 }
 

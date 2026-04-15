@@ -1632,7 +1632,7 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
     setAnalyzeResult(result);
 
     if (result) {
-      incrementUsage(); // Count this analysis
+      await incrementUsage(); // Count this analysis
       const nl = {
         id: Date.now(), date: new Date().toLocaleDateString("de-DE"), direction: "eingehend",
         type: result.dokumenttyp || result.kategorie || "Brief", summary: result.klartext, analyzed: true,
@@ -1640,22 +1640,26 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
         document: fileData ? { base64: fileData.base64, mediaType: fileData.mediaType, isImage: fileData.isImage, isPdf: fileData.isPdf, fileName: fileData.fileName || "Dokument" } : null,
         originalText: analyzeText || null,
       };
+      // DB-safe version: strip base64 (too large for JSONB)
+      const nlForDb = { ...nl, document: nl.document ? { mediaType: nl.document.mediaType, isImage: nl.document.isImage, isPdf: nl.document.isPdf, fileName: nl.document.fileName } : null };
 
       if (activeProject) {
         // Inside a project → add to this project
-        const updatedFields = { letters: [...activeProject.letters, nl], ampel: result.ampel, frist: result.frist || activeProject.frist, behoerde: result.behoerde || activeProject.behoerde, aktenzeichen: result.aktenzeichen || activeProject.aktenzeichen || "", referenzen: [...(activeProject.referenzen || []), ...(result.referenzen || [])].filter((v, i, a) => a.indexOf(v) === i) };
-        setProjects(projects.map(p => p.id === activeProject.id ? { ...p, ...updatedFields } : p));
-        setActiveProject(prev => ({ ...prev, ...updatedFields }));
+        const stateFields = { letters: [...activeProject.letters, nl], ampel: result.ampel, frist: result.frist || activeProject.frist, behoerde: result.behoerde || activeProject.behoerde, aktenzeichen: result.aktenzeichen || activeProject.aktenzeichen || "", referenzen: [...(activeProject.referenzen || []), ...(result.referenzen || [])].filter((v, i, a) => a.indexOf(v) === i) };
+        const dbFields = { ...stateFields, letters: [...(activeProject.letters || []).map(l => ({ ...l, document: l.document ? { mediaType: l.document.mediaType, isImage: l.document.isImage, isPdf: l.document.isPdf, fileName: l.document.fileName } : null })), nlForDb] };
+        setProjects(projects.map(p => p.id === activeProject.id ? { ...p, ...stateFields } : p));
+        setActiveProject(prev => ({ ...prev, ...stateFields }));
         setSavedToProject(activeProject);
-        if (user?.id) { try { await dbUpdateProject(activeProject.id, updatedFields); } catch (e) { console.error("Save failed:", e); } }
+        if (user?.id) { try { await dbUpdateProject(activeProject.id, dbFields); } catch (e) { console.error("Save failed:", e); } }
       } else {
         // Smart matching: find existing project or create new
         const match = findMatchingProject(result);
         if (match) {
-          const updatedFields = { letters: [...match.letters, nl], ampel: result.ampel, frist: result.frist || match.frist, behoerde: result.behoerde || match.behoerde, aktenzeichen: result.aktenzeichen || match.aktenzeichen || "", referenzen: [...(match.referenzen || []), ...(result.referenzen || [])].filter((v, i, a) => a.indexOf(v) === i) };
-          setProjects(projects.map(p => p.id === match.id ? { ...p, ...updatedFields } : p));
+          const stateFields = { letters: [...match.letters, nl], ampel: result.ampel, frist: result.frist || match.frist, behoerde: result.behoerde || match.behoerde, aktenzeichen: result.aktenzeichen || match.aktenzeichen || "", referenzen: [...(match.referenzen || []), ...(result.referenzen || [])].filter((v, i, a) => a.indexOf(v) === i) };
+          const dbFields = { ...stateFields, letters: [...(match.letters || []).map(l => ({ ...l, document: l.document ? { mediaType: l.document.mediaType, isImage: l.document.isImage, isPdf: l.document.isPdf, fileName: l.document.fileName } : null })), nlForDb] };
+          setProjects(projects.map(p => p.id === match.id ? { ...p, ...stateFields } : p));
           setSavedToProject(match);
-          if (user?.id) { try { await dbUpdateProject(match.id, updatedFields); } catch (e) { console.error("Save failed:", e); } }
+          if (user?.id) { try { await dbUpdateProject(match.id, dbFields); } catch (e) { console.error("Save failed:", e); } }
         } else {
           // Create new project with AI-suggested name
           const newProject = {
@@ -1665,19 +1669,25 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
             behoerde: result.behoerde || "Unbekannt",
             frist: result.frist || null, aktenzeichen: result.aktenzeichen || "", referenzen: result.referenzen || [],
             dokumenttyp: result.dokumenttyp || null,
-            letters: [nl],
+            letters: [nlForDb],
           };
           if (user?.id) {
             const { data, error } = await dbCreateProject(user.id, newProject);
             if (data) {
-              const saved = { ...data, referenzen: data.referenzen || [], letters: data.letters || [] };
+              // Merge DB response with local base64 data for viewing
+              const saved = { ...data, referenzen: data.referenzen || [], letters: [nl] };
               setProjects(prev => [saved, ...prev]);
               setSavedToProject(saved);
             } else {
               console.error("Create failed:", error);
+              alert("Projekt konnte nicht gespeichert werden: " + (error?.message || "Unbekannter Fehler"));
+              // Still save locally
+              const local = { ...newProject, id: Date.now() + 1, letters: [nl] };
+              setProjects(prev => [local, ...prev]);
+              setSavedToProject(local);
             }
           } else {
-            const local = { ...newProject, id: Date.now() + 1 };
+            const local = { ...newProject, id: Date.now() + 1, letters: [nl] };
             setProjects(prev => [local, ...prev]);
             setSavedToProject(local);
           }

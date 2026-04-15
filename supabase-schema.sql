@@ -85,6 +85,11 @@ create policy "Admins can view all profiles"
   on profiles for select
   using (exists (select 1 from profiles where id = auth.uid() and is_admin = true));
 
+drop policy if exists "Admins can delete profiles" on profiles;
+create policy "Admins can delete profiles"
+  on profiles for delete
+  using (exists (select 1 from profiles where id = auth.uid() and is_admin = true));
+
 -- PROJECTS policies
 drop policy if exists "Users can view own projects" on projects;
 create policy "Users can view own projects"
@@ -111,6 +116,11 @@ create policy "Admins can view all projects"
   on projects for select
   using (exists (select 1 from profiles where id = auth.uid() and is_admin = true));
 
+drop policy if exists "Admins can delete all projects" on projects;
+create policy "Admins can delete all projects"
+  on projects for delete
+  using (exists (select 1 from profiles where id = auth.uid() and is_admin = true));
+
 -- USAGE policies
 drop policy if exists "Users can view own usage" on usage_tracking;
 create policy "Users can view own usage"
@@ -125,6 +135,11 @@ create policy "Users can manage own usage"
 drop policy if exists "Admins can view all usage" on usage_tracking;
 create policy "Admins can view all usage"
   on usage_tracking for select
+  using (exists (select 1 from profiles where id = auth.uid() and is_admin = true));
+
+drop policy if exists "Admins can delete all usage" on usage_tracking;
+create policy "Admins can delete all usage"
+  on usage_tracking for delete
   using (exists (select 1 from profiles where id = auth.uid() and is_admin = true));
 
 -- ─── AUTO-CREATE PROFILE ON SIGNUP ─────────────────

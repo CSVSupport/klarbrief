@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { supabase, signUp, signIn, signOut, getSession, getProfile, updateProfile as dbUpdateProfile, getProjects, createProject as dbCreateProject, updateProject as dbUpdateProject, deleteProject as dbDeleteProject, getUsageForMonth, incrementUsage as dbIncrementUsage, adminGetAllUsers, adminGetAllProjects, adminGetAllUsage } from "./lib/supabase";
 import { FileText, Shield, Clock, Search, Upload, ChevronRight, Check, X, Menu, Bell, Settings, LogOut, Users, BarChart3, TrendingUp, Eye, Edit3, Trash2, Plus, ArrowLeft, Home, Folder, AlertTriangle, CheckCircle, AlertCircle, Info, Send, Printer, Download, Star, Zap, Lock, Globe, MessageSquare, Phone, Mail, MapPin, Calendar, ChevronDown, ChevronUp, Filter, RefreshCw, Award, Heart, ExternalLink, Cookie, BookOpen, Scale, CreditCard, UserPlus, PieChart, Activity, Layers, Target, ArrowRight, Sparkles, Bot, Camera, Image, FileUp, File } from "lucide-react";
 
 // ============================================
@@ -1160,42 +1161,48 @@ function AuthPage({ mode, setPage, onLogin }) {
 
   const ADMIN_EMAIL = "info@csv-support.de";
 
-  const handleSubmit = () => {
-    const normEmail = email.trim().toLowerCase();
-    if (!normEmail) return;
-    let userData;
-    if (mode === "register" && name && normEmail && pass) {
-      userData = { name: name.trim(), email: normEmail, isAdmin: normEmail === ADMIN_EMAIL };
-      // Register in user registry so admin sees new users
-      try {
-        const registry = JSON.parse(localStorage.getItem("kb_user_registry") || "[]");
-        if (!registry.find(u => u.email === normEmail)) {
-          registry.push({ email: normEmail, name: name.trim(), registeredAt: new Date().toISOString() });
-          localStorage.setItem("kb_user_registry", JSON.stringify(registry));
-        }
-      } catch {}
-    } else if (mode === "login" && normEmail && pass) {
-      userData = { name: normEmail.split("@")[0], email: normEmail, isAdmin: normEmail === ADMIN_EMAIL };
-      // Also track in registry on first login (for users who existed before registry was added)
-      try {
-        const registry = JSON.parse(localStorage.getItem("kb_user_registry") || "[]");
-        if (!registry.find(u => u.email === normEmail)) {
-          registry.push({ email: normEmail, name: normEmail.split("@")[0], registeredAt: new Date().toISOString() });
-          localStorage.setItem("kb_user_registry", JSON.stringify(registry));
-        }
-      } catch {}
-    } else return;
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
 
-    // Check if 2FA is enabled for this user
-    const twoFA = get2FAConfig(normEmail);
-    if (mode === "login" && twoFA?.enabled) {
-      setPendingUser(userData);
-      setStep("2fa");
-      setTotpInput("");
-      setTotpError("");
-    } else {
-      onLogin(userData);
-      setPage("dashboard");
+  const handleSubmit = async () => {
+    const normEmail = email.trim().toLowerCase();
+    if (!normEmail || !pass) return;
+    if (mode === "register" && !name) return;
+    setAuthError(""); setAuthLoading(true);
+
+    try {
+      if (mode === "register") {
+        const { data, error } = await signUp(normEmail, pass, name.trim());
+        if (error) { setAuthError(error.message); setAuthLoading(false); return; }
+        if (!data.session) {
+          setAuthError("Bitte bestätige deine E-Mail-Adresse. Ein Bestätigungslink wurde dir zugesandt.");
+          setAuthLoading(false);
+          return;
+        }
+        onLogin({ id: data.user.id, name: name.trim(), email: normEmail, isAdmin: normEmail === ADMIN_EMAIL });
+        setPage("dashboard");
+      } else {
+        const { data, error } = await signIn(normEmail, pass);
+        if (error) { setAuthError("E-Mail oder Passwort falsch."); setAuthLoading(false); return; }
+
+        const userData = { id: data.user.id, name: data.user.user_metadata?.name || normEmail.split("@")[0], email: normEmail, isAdmin: normEmail === ADMIN_EMAIL };
+
+        // Check if 2FA is enabled
+        const twoFA = get2FAConfig(normEmail);
+        if (twoFA?.enabled) {
+          setPendingUser(userData);
+          setStep("2fa");
+          setTotpInput("");
+          setTotpError("");
+          setAuthLoading(false);
+        } else {
+          onLogin(userData);
+          setPage("dashboard");
+        }
+      }
+    } catch (e) {
+      setAuthError("Verbindungsfehler. Bitte versuche es erneut.");
+      setAuthLoading(false);
     }
   };
 
@@ -1265,7 +1272,8 @@ function AuthPage({ mode, setPage, onLogin }) {
       <Input label="E-Mail" type="email" value={email} onChange={setEmail} placeholder="name@beispiel.de" icon={Mail} />
       <Input label="Passwort" type="password" value={pass} onChange={setPass} placeholder="••••••••" icon={Lock} />
       </div>
-      <Btn onClick={handleSubmit} style={{ width: "100%", marginTop: 8 }}>{mode === "login" ? "Anmelden" : "Kostenlos registrieren"}</Btn>
+      {authError && <div style={{ padding: 12, borderRadius: 8, background: `${brand.danger}10`, border: `1px solid ${brand.danger}30`, marginBottom: 12, color: brand.danger, fontSize: 13, fontWeight: 600, textAlign: "center" }}>{authError}</div>}
+      <Btn onClick={handleSubmit} disabled={authLoading} style={{ width: "100%", marginTop: 8, opacity: authLoading ? 0.6 : 1 }}>{authLoading ? <><RefreshCw size={16} style={{ animation: "spin 1s linear infinite" }} /> Einen Moment...</> : (mode === "login" ? "Anmelden" : "Kostenlos registrieren")}</Btn>
       <p style={{ textAlign: "center", marginTop: 24, fontSize: 14, color: brand.textMuted }}>
         {mode === "login" ? "Noch kein Account? " : "Bereits registriert? "}
         <span onClick={() => setPage(mode === "login" ? "register" : "login")} style={{ color: brand.primary, fontWeight: 600, cursor: "pointer" }}>{mode === "login" ? "Registrieren" : "Anmelden"}</span>
@@ -1389,11 +1397,7 @@ function TwoFactorSetup({ email }) {
 // DASHBOARD
 // ═══════════════════════════════════════════
 function DashboardPage({ user, setUser, setPage }) {
-  // Load from localStorage with user-scoped keys
-  const storageKey = (k) => `kb_${user?.email || "anon"}_${k}`;
-  const loadState = (key, fallback) => { try { const s = localStorage.getItem(storageKey(key)); return s ? JSON.parse(s) : fallback; } catch { return fallback; } };
-
-  const [projects, setProjects] = useState(() => loadState("projects", []));
+  const [projects, setProjects] = useState([]);
   const [activeProject, setActiveProject] = useState(null);
   const [showNewProject, setShowNewProject] = useState(false);
   const [showAnalyze, setShowAnalyze] = useState(false);
@@ -1405,32 +1409,82 @@ function DashboardPage({ user, setUser, setPage }) {
   const [editorIntent, setEditorIntent] = useState(""); const [editorTone, setEditorTone] = useState("sachlich"); const [editorResult, setEditorResult] = useState(""); const [editorLoading, setEditorLoading] = useState(false);
   const [editorAktenzeichen, setEditorAktenzeichen] = useState("");
   const [showDocument, setShowDocument] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  // Profile loaded from localStorage
-  const [profile, setProfile] = useState(() => loadState("profile", {
-    vorname: user?.name?.split(" ")[0] || "", nachname: user?.name?.split(" ").slice(1).join(" ") || "",
-    strasse: "", plz: "", ort: "", email: user?.email || "", telefon: "",
-    plan: "free", planStart: new Date().toISOString().split("T")[0],
-  }));
+  // Profile loaded from Supabase
+  const [profile, setProfile] = useState({
+    vorname: "", nachname: "", strasse: "", plz: "", ort: "",
+    email: user?.email || "", telefon: "", plan: "free",
+  });
 
-  // Persist projects & profile on change
-  useEffect(() => { try { localStorage.setItem(storageKey("projects"), JSON.stringify(projects)); } catch(e) { console.warn("Storage full", e); } }, [projects]);
-  useEffect(() => { try { localStorage.setItem(storageKey("profile"), JSON.stringify(profile)); } catch(e) { console.warn("Storage full", e); } }, [profile]);
+  // ── Load initial data from Supabase ──
+  useEffect(() => {
+    if (!user?.id) return;
+    let mounted = true;
+    (async () => {
+      try {
+        const [profileRes, projectsRes] = await Promise.all([
+          getProfile(user.id),
+          getProjects(user.id),
+        ]);
+        if (!mounted) return;
+        if (profileRes.data) {
+          setProfile({
+            vorname: profileRes.data.vorname || user?.name?.split(" ")[0] || "",
+            nachname: profileRes.data.nachname || user?.name?.split(" ").slice(1).join(" ") || "",
+            strasse: profileRes.data.strasse || "",
+            plz: profileRes.data.plz || "",
+            ort: profileRes.data.ort || "",
+            email: profileRes.data.email || user.email,
+            telefon: profileRes.data.telefon || "",
+            plan: profileRes.data.plan || "free",
+            mollieCustomerId: profileRes.data.mollie_customer_id || null,
+            mollieSubscription: profileRes.data.subscription_active ? { active: true, subscriptionId: profileRes.data.mollie_subscription_id, nextPaymentDate: profileRes.data.next_payment_date } : null,
+          });
+        }
+        if (projectsRes.data) {
+          setProjects(projectsRes.data.map(p => ({
+            ...p,
+            referenzen: p.referenzen || [],
+            letters: p.letters || [],
+          })));
+        }
+      } catch (e) { console.error("Load error:", e); }
+      setLoading(false);
+    })();
+    return () => { mounted = false; };
+  }, [user?.id]);
+
+  // ── Persist profile to Supabase on change ──
+  const updateProfile = async (key, val) => {
+    const updated = { ...profile, [key]: val };
+    setProfile(updated);
+    if (user?.id) {
+      const dbField = { vorname: "vorname", nachname: "nachname", strasse: "strasse", plz: "plz", ort: "ort", telefon: "telefon", plan: "plan", mollieCustomerId: "mollie_customer_id" }[key];
+      if (dbField) { try { await dbUpdateProfile(user.id, { [dbField]: val }); } catch {} }
+      else if (key === "mollieSubscription") {
+        try { await dbUpdateProfile(user.id, { subscription_active: val?.active || false, mollie_subscription_id: val?.subscriptionId || null, next_payment_date: val?.nextPaymentDate || null }); } catch {}
+      }
+    }
+  };
 
   // ── Usage Tracking & Limits ──
   const PLAN_LIMITS = { free: 3, plus: Infinity, pro: Infinity, business: Infinity, lifetime: Infinity };
   const currentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
-  const [usage, setUsage] = useState(() => loadState("usage", {}));
-  const monthlyCount = usage[currentMonth] || 0;
+  const [monthlyCount, setMonthlyCount] = useState(0);
   const planLimit = PLAN_LIMITS[profile.plan] || 3;
   const canAnalyze = monthlyCount < planLimit;
   const remainingAnalyses = Math.max(0, planLimit - monthlyCount);
   const [showUpgrade, setShowUpgrade] = useState(false);
 
-  const incrementUsage = () => {
-    const updated = { ...usage, [currentMonth]: (usage[currentMonth] || 0) + 1 };
-    setUsage(updated);
-    try { localStorage.setItem(storageKey("usage"), JSON.stringify(updated)); } catch {}
+  useEffect(() => {
+    if (!user?.id) return;
+    getUsageForMonth(user.id, currentMonth).then(({ count }) => setMonthlyCount(count));
+  }, [user?.id, currentMonth]);
+
+  const incrementUsage = async () => {
+    setMonthlyCount(c => c + 1);
+    if (user?.id) { try { await dbIncrementUsage(user.id, currentMonth); } catch {} }
   };
 
   // Handle return from Mollie checkout
@@ -1479,7 +1533,6 @@ function DashboardPage({ user, setUser, setPage }) {
       }).catch(() => {});
     }
   }, []);
-  const updateProfile = (key, val) => setProfile(p => ({ ...p, [key]: val }));
   const fullName = `${profile.vorname} ${profile.nachname}`.trim() || user?.name || "Nutzer";
   const fullAddress = [profile.strasse, `${profile.plz} ${profile.ort}`].filter(s => s.trim()).join("\n");
 
@@ -1590,21 +1643,22 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
 
       if (activeProject) {
         // Inside a project → add to this project
-        const up = projects.map(p => p.id === activeProject.id ? { ...p, letters: [...p.letters, nl], ampel: result.ampel, frist: result.frist || p.frist, behoerde: result.behoerde || p.behoerde, aktenzeichen: result.aktenzeichen || p.aktenzeichen || "", referenzen: [...(p.referenzen || []), ...(result.referenzen || [])].filter((v, i, a) => a.indexOf(v) === i) } : p);
-        setProjects(up);
-        setActiveProject(prev => ({ ...prev, letters: [...prev.letters, nl], ampel: result.ampel }));
+        const updatedFields = { letters: [...activeProject.letters, nl], ampel: result.ampel, frist: result.frist || activeProject.frist, behoerde: result.behoerde || activeProject.behoerde, aktenzeichen: result.aktenzeichen || activeProject.aktenzeichen || "", referenzen: [...(activeProject.referenzen || []), ...(result.referenzen || [])].filter((v, i, a) => a.indexOf(v) === i) };
+        setProjects(projects.map(p => p.id === activeProject.id ? { ...p, ...updatedFields } : p));
+        setActiveProject(prev => ({ ...prev, ...updatedFields }));
         setSavedToProject(activeProject);
+        if (user?.id) { try { await dbUpdateProject(activeProject.id, updatedFields); } catch (e) { console.error("Save failed:", e); } }
       } else {
         // Smart matching: find existing project or create new
         const match = findMatchingProject(result);
         if (match) {
-          const up = projects.map(p => p.id === match.id ? { ...p, letters: [...p.letters, nl], ampel: result.ampel, frist: result.frist || p.frist, behoerde: result.behoerde || p.behoerde, aktenzeichen: result.aktenzeichen || p.aktenzeichen || "", referenzen: [...(p.referenzen || []), ...(result.referenzen || [])].filter((v, i, a) => a.indexOf(v) === i) } : p);
-          setProjects(up);
+          const updatedFields = { letters: [...match.letters, nl], ampel: result.ampel, frist: result.frist || match.frist, behoerde: result.behoerde || match.behoerde, aktenzeichen: result.aktenzeichen || match.aktenzeichen || "", referenzen: [...(match.referenzen || []), ...(result.referenzen || [])].filter((v, i, a) => a.indexOf(v) === i) };
+          setProjects(projects.map(p => p.id === match.id ? { ...p, ...updatedFields } : p));
           setSavedToProject(match);
+          if (user?.id) { try { await dbUpdateProject(match.id, updatedFields); } catch (e) { console.error("Save failed:", e); } }
         } else {
           // Create new project with AI-suggested name
-          const np = {
-            id: Date.now() + 1,
+          const newProject = {
             name: result.projektname || (result.betreff ? `${result.betreff}` : `${result.dokumenttyp || result.kategorie} — ${result.behoerde}`),
             category: result.kategorie || "Sonstiges",
             status: "offen", ampel: result.ampel || "gelb",
@@ -1613,18 +1667,44 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
             dokumenttyp: result.dokumenttyp || null,
             letters: [nl],
           };
-          setProjects(prev => [np, ...prev]);
-          setSavedToProject(np);
+          if (user?.id) {
+            const { data, error } = await dbCreateProject(user.id, newProject);
+            if (data) {
+              const saved = { ...data, referenzen: data.referenzen || [], letters: data.letters || [] };
+              setProjects(prev => [saved, ...prev]);
+              setSavedToProject(saved);
+            } else {
+              console.error("Create failed:", error);
+            }
+          } else {
+            const local = { ...newProject, id: Date.now() + 1 };
+            setProjects(prev => [local, ...prev]);
+            setSavedToProject(local);
+          }
         }
       }
     }
     setAnalyzing(false);
   };
 
-  const createProject = () => {
+  const createProject = async () => {
     if (!npName) return;
-    const np = { id: Date.now(), name: npName, category: npCat, status: "offen", ampel: "gruen", behoerde: "Noch nicht zugeordnet", frist: null, aktenzeichen: "", letters: [] };
-    setProjects([np, ...projects]); setNpName(""); setShowNewProject(false); setActiveProject(np); setView("project");
+    const newProject = { name: npName, category: npCat, status: "offen", ampel: "gruen", behoerde: "Noch nicht zugeordnet", frist: null, aktenzeichen: "", referenzen: [], letters: [] };
+    if (user?.id) {
+      const { data } = await dbCreateProject(user.id, newProject);
+      if (data) {
+        const saved = { ...data, referenzen: data.referenzen || [], letters: data.letters || [] };
+        setProjects([saved, ...projects]);
+        setActiveProject(saved);
+      }
+    } else {
+      const local = { ...newProject, id: Date.now() };
+      setProjects([local, ...projects]);
+      setActiveProject(local);
+    }
+    setNpName("");
+    setShowNewProject(false);
+    setView("project");
   };
 
   const dashTabs = [["overview","Übersicht"],["settings","Einstellungen"]];
@@ -1848,7 +1928,7 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
     <Card style={{ padding: 16, marginBottom: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: activeProject.referenzen?.length > 0 ? 12 : 0 }}>
         <span style={{ fontSize: 14, fontWeight: 600 }}>Aktenzeichen:</span>
-        <input value={activeProject.aktenzeichen || ""} onChange={e => { const v = e.target.value; setActiveProject(p => ({...p, aktenzeichen: v})); setProjects(ps => ps.map(p => p.id === activeProject.id ? {...p, aktenzeichen: v} : p)); }} placeholder="z.B. 205/12345/2026" style={{ flex: 1, minWidth: 200, padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${brand.borderLight}`, fontSize: 14, fontFamily: "inherit", outline: "none" }} />
+        <input value={activeProject.aktenzeichen || ""} onChange={e => { const v = e.target.value; setActiveProject(p => ({...p, aktenzeichen: v})); setProjects(ps => ps.map(p => p.id === activeProject.id ? {...p, aktenzeichen: v} : p)); if (user?.id) dbUpdateProject(activeProject.id, { aktenzeichen: v }); }} placeholder="z.B. 205/12345/2026" style={{ flex: 1, minWidth: 200, padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${brand.borderLight}`, fontSize: 14, fontFamily: "inherit", outline: "none" }} />
         {activeProject.aktenzeichen && <span style={{ fontSize: 11, color: brand.success, fontWeight: 600 }}>✓ Wird im Antwortbrief verwendet</span>}
       </div>
       {activeProject.referenzen?.length > 0 && (
@@ -1948,103 +2028,119 @@ function AdminPage() {
   const [tab, setTab] = useState("overview");
   const [searchTerm, setSearchTerm] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [dbData, setDbData] = useState({ users: [], projects: [], usage: [] });
 
-  // ── Read REAL data from localStorage ──
-  const realData = React.useMemo(() => {
-    const users = [];
-    const allProjects = [];
-    let totalAnalyses = 0;
-    const planCounts = { free: 0, plus: 0, pro: 0, business: 0 };
-    const currentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
-    let analysesThisMonth = 0;
-    let mrr = 0;
-    const planPrices = { free: 0, plus: 4.99, pro: 9.99, business: 29.99 };
-
-    try {
-      // Find all user emails from localStorage keys
-      const userEmails = new Set();
-      // Source 1: User registry (all registered users)
+  // ── Load REAL data from Supabase ──
+  useEffect(() => {
+    let mounted = true;
+    setLoading(true);
+    (async () => {
       try {
-        const registry = JSON.parse(localStorage.getItem("kb_user_registry") || "[]");
-        registry.forEach(u => { if (u.email) userEmails.add(u.email); });
-      } catch {}
-      // Source 2: localStorage keys (users who have data)
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        const m = key?.match(/^kb_(.+?)_(profile|projects|usage)$/);
-        if (m && m[1] !== "anon") userEmails.add(m[1]);
-      }
-
-      userEmails.forEach(email => {
-        try {
-          const profile = JSON.parse(localStorage.getItem(`kb_${email}_profile`) || "{}");
-          const projects = JSON.parse(localStorage.getItem(`kb_${email}_projects`) || "[]");
-          const usage = JSON.parse(localStorage.getItem(`kb_${email}_usage`) || "{}");
-          const totalUsage = Object.values(usage).reduce((s, v) => s + (v || 0), 0);
-          const monthUsage = usage[currentMonth] || 0;
-          const plan = profile.plan || "free";
-
-          users.push({
-            email,
-            name: `${profile.vorname || ""} ${profile.nachname || ""}`.trim() || email.split("@")[0],
-            plan,
-            projects: projects.length,
-            analyses: totalUsage,
-            analysesThisMonth: monthUsage,
-            registered: profile.planStart || "—",
-            has2FA: !!JSON.parse(localStorage.getItem(`kb_2fa_${email}`) || "{}").enabled,
-          });
-
-          allProjects.push(...projects);
-          totalAnalyses += totalUsage;
-          analysesThisMonth += monthUsage;
-          planCounts[plan] = (planCounts[plan] || 0) + 1;
-          mrr += planPrices[plan] || 0;
-        } catch {}
-      });
-    } catch (e) { console.warn("Admin data read error:", e); }
-
-    return { users, allProjects, totalAnalyses, planCounts, analysesThisMonth, mrr, currentMonth };
+        const [usersRes, projectsRes, usageRes] = await Promise.all([
+          adminGetAllUsers(),
+          adminGetAllProjects(),
+          adminGetAllUsage(),
+        ]);
+        if (!mounted) return;
+        setDbData({
+          users: usersRes.data || [],
+          projects: projectsRes.data || [],
+          usage: usageRes.data || [],
+        });
+      } catch (e) { console.error("Admin load error:", e); }
+      setLoading(false);
+    })();
+    return () => { mounted = false; };
   }, [refreshKey]);
 
+  // ── Aggregate ──
+  const realData = React.useMemo(() => {
+    const currentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+    const planPrices = { free: 0, plus: 4.99, pro: 9.99, business: 29.99, lifetime: 0 };
+    const planCounts = { free: 0, plus: 0, pro: 0, business: 0, lifetime: 0 };
+    let mrr = 0, totalAnalyses = 0, analysesThisMonth = 0;
+
+    // Group usage by user
+    const usageByUser = {};
+    dbData.usage.forEach(u => {
+      if (!usageByUser[u.user_id]) usageByUser[u.user_id] = { total: 0, month: 0 };
+      usageByUser[u.user_id].total += u.count || 0;
+      if (u.month === currentMonth) usageByUser[u.user_id].month += u.count || 0;
+      totalAnalyses += u.count || 0;
+      if (u.month === currentMonth) analysesThisMonth += u.count || 0;
+    });
+
+    // Projects by user
+    const projectsByUser = {};
+    dbData.projects.forEach(p => {
+      projectsByUser[p.user_id] = (projectsByUser[p.user_id] || 0) + 1;
+    });
+
+    // Build user list
+    const users = dbData.users.map(u => {
+      const plan = u.plan || "free";
+      planCounts[plan] = (planCounts[plan] || 0) + 1;
+      mrr += planPrices[plan] || 0;
+      return {
+        id: u.id,
+        email: u.email,
+        name: `${u.vorname || ""} ${u.nachname || ""}`.trim() || u.email?.split("@")[0] || "Nutzer",
+        plan,
+        projects: projectsByUser[u.id] || 0,
+        analyses: usageByUser[u.id]?.total || 0,
+        analysesThisMonth: usageByUser[u.id]?.month || 0,
+        registered: u.created_at ? new Date(u.created_at).toLocaleDateString("de-DE") : "—",
+        is_admin: u.is_admin,
+        subscription_active: u.subscription_active,
+      };
+    });
+
+    return { users, planCounts, mrr, totalAnalyses, analysesThisMonth, currentMonth };
+  }, [dbData]);
+
   const totalUsers = realData.users.length;
-  const totalProjects = realData.allProjects.length;
-  const filtered = realData.users.filter(u => u.name.toLowerCase().includes(searchTerm.toLowerCase()) || u.email.toLowerCase().includes(searchTerm.toLowerCase()));
+  const totalProjects = dbData.projects.length;
+  const filtered = realData.users.filter(u => u.name.toLowerCase().includes(searchTerm.toLowerCase()) || u.email?.toLowerCase().includes(searchTerm.toLowerCase()));
   const conversionRate = totalUsers > 0 ? ((totalUsers - (realData.planCounts.free || 0)) / totalUsers * 100).toFixed(1) : "0.0";
 
-  const handleResetAll = () => {
-    if (!confirm("WARNUNG: Alle Statistiken, Projekte und Nutzungsdaten ALLER Nutzer werden zurückgesetzt. Fortfahren?")) return;
+  const handleResetAll = async () => {
+    if (!confirm("WARNUNG: Alle Projekte und Nutzungsdaten ALLER Nutzer werden gelöscht. Nutzer-Accounts bleiben erhalten. Fortfahren?")) return;
     if (!confirm("Wirklich sicher? Diese Aktion kann nicht rückgängig gemacht werden.")) return;
-    const keysToDelete = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key?.startsWith("kb_") && (key.includes("_projects") || key.includes("_usage"))) keysToDelete.push(key);
-    }
-    keysToDelete.forEach(k => localStorage.removeItem(k));
-    alert(`${keysToDelete.length} Einträge gelöscht. Statistiken zurückgesetzt auf 0.`);
-    setRefreshKey(k => k + 1);
+    try {
+      // Delete all projects and usage (admin has RLS access)
+      await supabase.from('projects').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      await supabase.from('usage_tracking').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      alert("Statistiken zurückgesetzt.");
+      setRefreshKey(k => k + 1);
+    } catch (e) { alert("Fehler: " + e.message); }
   };
 
-  const handleDeleteUser = (email) => {
+  const handleDeleteUser = async (userId, email) => {
     if (!confirm(`Nutzer ${email} und alle zugehörigen Daten wirklich löschen?`)) return;
-    const keysToDelete = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key?.includes(email)) keysToDelete.push(key);
-    }
-    keysToDelete.forEach(k => localStorage.removeItem(k));
-    setRefreshKey(k => k + 1);
+    try {
+      await supabase.from('projects').delete().eq('user_id', userId);
+      await supabase.from('usage_tracking').delete().eq('user_id', userId);
+      await supabase.from('profiles').delete().eq('id', userId);
+      alert("Nutzerdaten gelöscht. Der Auth-Account muss separat in Supabase (Authentication → Users) gelöscht werden.");
+      setRefreshKey(k => k + 1);
+    } catch (e) { alert("Fehler: " + e.message); }
   };
+
+  if (loading) return <div style={{ padding: 60, textAlign: "center" }}>
+    <RefreshCw size={32} style={{ animation: "spin 1s linear infinite", color: brand.primary }} />
+    <p style={{ marginTop: 16, color: brand.textMuted }}>Lade Daten aus Supabase...</p>
+  </div>;
 
   return <div style={{ padding: "32px 20px", maxWidth: 1200, margin: "0 auto" }}>
     <div style={{ marginBottom: 32, display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
       <div>
         <h1 style={{ fontSize: 28, fontWeight: 800, color: brand.text, margin: "0 0 4px" }}>Admin-Dashboard</h1>
-        <p style={{ fontSize: 15, color: brand.textMuted, margin: 0 }}>Echtzeit-Daten aus dem lokalen Speicher</p>
+        <p style={{ fontSize: 15, color: brand.textMuted, margin: 0 }}>Live-Daten aus Supabase</p>
       </div>
       <div style={{ display: "flex", gap: 8 }}>
         <Btn variant="outline" size="sm" onClick={() => setRefreshKey(k => k + 1)}><RefreshCw size={14} /> Aktualisieren</Btn>
-        <Btn variant="danger" size="sm" onClick={handleResetAll}><Trash2 size={14} /> Alles zurücksetzen</Btn>
+        <Btn variant="danger" size="sm" onClick={handleResetAll}><Trash2 size={14} /> Statistiken zurücksetzen</Btn>
       </div>
     </div>
     <div style={{ display: "flex", gap: 4, marginBottom: 32, overflowX: "auto" }}>
@@ -2063,7 +2159,7 @@ function AdminPage() {
           <h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>Abo-Verteilung</h3>
           {totalUsers === 0 ? <p style={{ color: brand.textMuted, fontSize: 14, marginTop: 16 }}>Noch keine Nutzer registriert.</p> :
           <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 16 }}>
-            {[["Free","free"],["Plus","plus"],["Pro","pro"],["Business","business"]].map(([n, key]) => {
+            {[["Free","free"],["Plus","plus"],["Pro","pro"],["Lifetime","lifetime"],["Business","business"]].map(([n, key]) => {
               const c = realData.planCounts[key] || 0;
               const p = totalUsers > 0 ? Math.round((c / totalUsers) * 100) : 0;
               return <div key={n}><div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, marginBottom: 4 }}><span style={{ fontWeight: 600, color: brand.text }}>{n}</span><span style={{ color: brand.textMuted }}>{c} ({p}%)</span></div><div style={{ height: 8, borderRadius: 4, background: brand.borderLight }}><div style={{ height: "100%", borderRadius: 4, background: brand.primary, width: `${p}%`, transition: "width 0.4s" }} /></div></div>;
@@ -2077,10 +2173,13 @@ function AdminPage() {
           </div>
         </Card>
         <Card>
-          <h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>Sicherheit</h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 16 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: `1px solid ${brand.borderLight}` }}><span style={{ fontSize: 14, color: brand.textMuted }}>Nutzer mit 2FA</span><span style={{ fontSize: 18, fontWeight: 800, color: brand.success }}>{realData.users.filter(u => u.has2FA).length} / {totalUsers}</span></div>
-            <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: `1px solid ${brand.borderLight}` }}><span style={{ fontSize: 14, color: brand.textMuted }}>2FA-Quote</span><span style={{ fontSize: 18, fontWeight: 800, color: brand.text }}>{totalUsers > 0 ? Math.round((realData.users.filter(u => u.has2FA).length / totalUsers) * 100) : 0}%</span></div>
+          <h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>Neueste Nutzer</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16 }}>
+            {realData.users.slice(0, 5).map(u => <div key={u.id} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: `1px solid ${brand.borderLight}` }}>
+              <div><div style={{ fontSize: 14, fontWeight: 600, color: brand.text }}>{u.name}</div><div style={{ fontSize: 12, color: brand.textMuted }}>{u.email}</div></div>
+              <Badge color={u.plan === "pro" ? brand.accent : u.plan === "plus" ? brand.primary : brand.textMuted} bg={u.plan === "pro" ? `${brand.accent}15` : u.plan === "plus" ? brand.bgMuted : `${brand.textMuted}10`}>{u.plan.toUpperCase()}</Badge>
+            </div>)}
+            {realData.users.length === 0 && <p style={{ color: brand.textMuted, fontSize: 14 }}>Noch keine Nutzer.</p>}
           </div>
         </Card>
       </div>
@@ -2090,26 +2189,27 @@ function AdminPage() {
       <Card style={{ marginBottom: 24 }}><div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}><Input value={searchTerm} onChange={setSearchTerm} placeholder="Nutzer suchen..." icon={Search} style={{ flex: 1, minWidth: 200, marginBottom: 0 }} /></div></Card>
       {filtered.length === 0 ? <Card style={{ textAlign: "center", padding: 48 }}><Users size={40} style={{ color: brand.borderLight, marginBottom: 12 }} /><p style={{ color: brand.textMuted, margin: 0 }}>{totalUsers === 0 ? "Noch keine Nutzer registriert." : "Keine Treffer."}</p></Card> :
       <Card style={{ padding: 0, overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
-        <thead><tr style={{ background: brand.bgMuted }}>{["Name","E-Mail","Plan","Projekte","Analysen","2FA",""].map(h => <th key={h} style={{ padding: "14px 16px", textAlign: "left", fontWeight: 700, color: brand.text, borderBottom: `2px solid ${brand.borderLight}` }}>{h}</th>)}</tr></thead>
-        <tbody>{filtered.map(u => <tr key={u.email} style={{ borderBottom: `1px solid ${brand.borderLight}` }}>
-          <td style={{ padding: "14px 16px", fontWeight: 600 }}>{u.name}</td>
+        <thead><tr style={{ background: brand.bgMuted }}>{["Name","E-Mail","Plan","Projekte","Analysen","Registriert",""].map(h => <th key={h} style={{ padding: "14px 16px", textAlign: "left", fontWeight: 700, color: brand.text, borderBottom: `2px solid ${brand.borderLight}` }}>{h}</th>)}</tr></thead>
+        <tbody>{filtered.map(u => <tr key={u.id} style={{ borderBottom: `1px solid ${brand.borderLight}` }}>
+          <td style={{ padding: "14px 16px", fontWeight: 600 }}>{u.name}{u.is_admin && <span style={{ marginLeft: 6, fontSize: 10, padding: "2px 6px", borderRadius: 4, background: brand.accent, color: "#fff", fontWeight: 700 }}>ADMIN</span>}</td>
           <td style={{ padding: "14px 16px", color: brand.textMuted }}>{u.email}</td>
           <td style={{ padding: "14px 16px" }}><Badge color={u.plan === "pro" ? brand.accent : u.plan === "plus" ? brand.primary : brand.textMuted} bg={u.plan === "pro" ? `${brand.accent}15` : u.plan === "plus" ? brand.bgMuted : `${brand.textMuted}10`}>{u.plan.toUpperCase()}</Badge></td>
           <td style={{ padding: "14px 16px" }}>{u.projects}</td>
           <td style={{ padding: "14px 16px" }}>{u.analyses} <span style={{ color: brand.textMuted, fontSize: 12 }}>({u.analysesThisMonth} Mo.)</span></td>
-          <td style={{ padding: "14px 16px" }}>{u.has2FA ? <Shield size={16} color={brand.success} /> : <span style={{ color: brand.textMuted, fontSize: 12 }}>—</span>}</td>
-          <td style={{ padding: "14px 16px" }}><button onClick={() => handleDeleteUser(u.email)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Trash2 size={16} color={brand.danger} /></button></td>
+          <td style={{ padding: "14px 16px", color: brand.textMuted, fontSize: 12 }}>{u.registered}</td>
+          <td style={{ padding: "14px 16px" }}>{!u.is_admin && <button onClick={() => handleDeleteUser(u.id, u.email)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Trash2 size={16} color={brand.danger} /></button>}</td>
         </tr>)}</tbody>
       </table></div></Card>}
     </>}
 
     {tab === "system" && <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 24 }}>
       <Card><h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>API-Kosten (geschätzt)</h3><div style={{ fontSize: 32, fontWeight: 800, color: brand.primary, margin: "12px 0" }}>{(realData.analysesThisMonth * 0.066).toFixed(2)}€</div><p style={{ fontSize: 14, color: brand.textMuted, margin: 0 }}>Aktueller Monat · ∅ 0,066€/Analyse</p></Card>
-      <Card><h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>System-Status</h3><div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>{[["Frontend","Online"],["Anthropic API","Online"],["Mollie API","Online"],["Storage","Online"]].map(([s,st]) => <div key={s} style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}><span style={{ fontWeight: 600 }}>{s}</span><span style={{ display: "flex", alignItems: "center", gap: 6, color: brand.success, fontWeight: 600 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: brand.success }} />{st}</span></div>)}</div></Card>
-      <Card><h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>Storage-Nutzung</h3><div style={{ fontSize: 32, fontWeight: 800, color: brand.primary, margin: "12px 0" }}>{(JSON.stringify(localStorage).length / 1024).toFixed(1)} KB</div><p style={{ fontSize: 14, color: brand.textMuted, margin: 0 }}>{localStorage.length} Einträge im LocalStorage</p></Card>
+      <Card><h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>System-Status</h3><div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>{[["Frontend","Online"],["Supabase DB","Online"],["Anthropic API","Online"],["Mollie","Online"]].map(([s,st]) => <div key={s} style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}><span style={{ fontWeight: 600 }}>{s}</span><span style={{ display: "flex", alignItems: "center", gap: 6, color: brand.success, fontWeight: 600 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: brand.success }} />{st}</span></div>)}</div></Card>
+      <Card><h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>Datenbank</h3><div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>{[["Nutzer", totalUsers],["Projekte", totalProjects],["Usage-Einträge", dbData.usage.length]].map(([l,v]) => <div key={l} style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}><span style={{ color: brand.textMuted }}>{l}</span><span style={{ fontWeight: 700 }}>{v}</span></div>)}</div></Card>
     </div>}
   </div>;
 }
+
 
 // ═══════════════════════════════════════════
 // OFFER / VERKAUFSSEITE
@@ -2494,21 +2594,63 @@ function LegalPage({ page }) {
 // ═══════════════════════════════════════════
 export default function App() {
   const [page, setPage] = useState("home");
-  const [user, setUser] = useState(() => { try { const s = localStorage.getItem("kb_user"); return s ? JSON.parse(s) : null; } catch { return null; } });
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [showCookies, setShowCookies] = useState(() => !localStorage.getItem("kb_cookies_accepted"));
   const isLoggedIn = !!user;
   const isAdmin = user?.isAdmin;
+  const ADMIN_EMAIL = "info@csv-support.de";
 
-  // Persist user login
+  // ── Supabase session check on mount + listener ──
   useEffect(() => {
-    if (user) localStorage.setItem("kb_user", JSON.stringify(user));
-    else localStorage.removeItem("kb_user");
-  }, [user]);
+    (async () => {
+      try {
+        const session = await getSession();
+        if (session?.user) {
+          const { data: profile } = await getProfile(session.user.id);
+          setUser({
+            id: session.user.id,
+            email: session.user.email,
+            name: profile ? `${profile.vorname || ""} ${profile.nachname || ""}`.trim() || session.user.email.split("@")[0] : session.user.email.split("@")[0],
+            isAdmin: session.user.email === ADMIN_EMAIL || profile?.is_admin,
+          });
+        }
+      } catch (e) { console.warn("Session check failed:", e); }
+      setAuthLoading(false);
+    })();
+
+    // Listen for auth changes (login/logout across tabs)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT") setUser(null);
+      if (event === "SIGNED_IN" && session?.user) {
+        getProfile(session.user.id).then(({ data: profile }) => {
+          setUser({
+            id: session.user.id,
+            email: session.user.email,
+            name: profile ? `${profile.vorname || ""} ${profile.nachname || ""}`.trim() || session.user.email.split("@")[0] : session.user.email.split("@")[0],
+            isAdmin: session.user.email === ADMIN_EMAIL || profile?.is_admin,
+          });
+        });
+      }
+    });
+    return () => { subscription.unsubscribe(); };
+  }, []);
 
   useEffect(() => { window.scrollTo({ top: 0, behavior: "smooth" }); }, [page]);
 
-  const handleLogout = () => { setUser(null); localStorage.removeItem("kb_user"); setPage("home"); };
+  const handleLogout = async () => {
+    await signOut();
+    setUser(null);
+    setPage("home");
+  };
   const handleCookieAccept = () => { setShowCookies(false); localStorage.setItem("kb_cookies_accepted", "1"); };
+
+  if (authLoading) return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: brand.bg }}>
+    <div style={{ textAlign: "center" }}>
+      <RefreshCw size={32} style={{ animation: "spin 1s linear infinite", color: brand.primary }} />
+      <p style={{ marginTop: 16, color: brand.textMuted, fontSize: 14 }}>Lade...</p>
+    </div>
+  </div>;
 
   const renderPage = () => {
     switch (page) {

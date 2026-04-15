@@ -1423,6 +1423,22 @@ function DashboardPage({ user, setUser, setPage }) {
           getProjects(user.id),
         ]);
         if (!mounted) return;
+
+        // Critical: If profile doesn't exist, the trigger failed.
+        // Try to create it manually so projects can be saved.
+        if (!profileRes.data && !profileRes.error?.code === "PGRST116") {
+          console.warn("Profile missing — attempting manual creation");
+          try {
+            await supabase.from('profiles').insert([{
+              id: user.id,
+              email: user.email,
+              is_admin: user.email === "info@csv-support.de",
+            }]);
+            const retry = await getProfile(user.id);
+            if (retry.data) profileRes.data = retry.data;
+          } catch (e) { console.error("Manual profile creation failed:", e); }
+        }
+
         if (profileRes.data) {
           setProfile({
             vorname: profileRes.data.vorname || user?.name?.split(" ")[0] || "",
@@ -1436,6 +1452,12 @@ function DashboardPage({ user, setUser, setPage }) {
             mollieCustomerId: profileRes.data.mollie_customer_id || null,
             mollieSubscription: profileRes.data.subscription_active ? { active: true, subscriptionId: profileRes.data.mollie_subscription_id, nextPaymentDate: profileRes.data.next_payment_date } : null,
           });
+        } else {
+          console.error("⚠️ KEIN PROFIL GEFUNDEN für User", user.id, "— Speicherung wird fehlschlagen!");
+        }
+        if (projectsRes.error) {
+          console.error("⚠️ Projekte konnten nicht geladen werden:", projectsRes.error);
+          alert("Projekte konnten nicht aus der Datenbank geladen werden.\n\nFehler: " + (projectsRes.error.message || JSON.stringify(projectsRes.error)) + "\n\nBitte prüfe die Supabase-Verbindung.");
         }
         if (projectsRes.data) {
           setProjects(projectsRes.data.map(p => ({
@@ -1444,7 +1466,10 @@ function DashboardPage({ user, setUser, setPage }) {
             letters: p.letters || [],
           })));
         }
-      } catch (e) { console.error("Load error:", e); }
+      } catch (e) {
+        console.error("Load error:", e);
+        alert("Fehler beim Laden der Daten: " + e.message);
+      }
       setLoading(false);
     })();
     return () => { mounted = false; };
@@ -1675,6 +1700,7 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
   const handleAnalyze = async () => {
     if (!analyzeText.trim() && !fileData) return;
     if (!canAnalyze) { setShowUpgrade(true); return; }
+    if (!user?.id) { alert("Bitte melde dich an um Briefe zu speichern."); return; }
     setAnalyzing(true); setSavedToProject(null);
 
     let result;
@@ -1682,12 +1708,13 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
       result = await analyzeWithAI(analyzeText, fileData);
     } catch (e) {
       console.error("Analysis failed:", e);
-      result = null;
+      alert("Analyse fehlgeschlagen: " + e.message);
+      setAnalyzing(false);
+      return;
     }
     setAnalyzeResult(result);
 
     if (result) {
-      // Increment usage (don't let failure stop project creation)
       try { await incrementUsage(); } catch (e) { console.warn("Usage tracking failed:", e); }
 
       const nl = {
@@ -1703,20 +1730,29 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
         if (activeProject) {
           const stateFields = { letters: [...activeProject.letters, nl], ampel: result.ampel, frist: result.frist || activeProject.frist, behoerde: result.behoerde || activeProject.behoerde, aktenzeichen: result.aktenzeichen || activeProject.aktenzeichen || "", referenzen: [...(activeProject.referenzen || []), ...(result.referenzen || [])].filter((v, i, a) => a.indexOf(v) === i) };
           const dbFields = { ...stateFields, letters: [...(activeProject.letters || []).map(l => ({ ...l, document: l.document ? { mediaType: l.document.mediaType, isImage: l.document.isImage, isPdf: l.document.isPdf, fileName: l.document.fileName } : null })), nlForDb] };
+
+          const { error } = await dbUpdateProject(activeProject.id, dbFields);
+          if (error) {
+            console.error("DB save failed:", error);
+            alert("⚠️ Speicherung fehlgeschlagen!\n\nFehler: " + (error.message || JSON.stringify(error)) + "\n\nDer Brief ist nur lokal gespeichert und geht beim Reload verloren!");
+          }
           setProjects(projects.map(p => p.id === activeProject.id ? { ...p, ...stateFields } : p));
           setActiveProject(prev => ({ ...prev, ...stateFields }));
           setSavedToProject(activeProject);
-          if (user?.id) { try { await dbUpdateProject(activeProject.id, dbFields); } catch (e) { console.warn("DB update failed:", e); } }
         } else {
           const match = findMatchingProject(result);
           if (match) {
             const stateFields = { letters: [...match.letters, nl], ampel: result.ampel, frist: result.frist || match.frist, behoerde: result.behoerde || match.behoerde, aktenzeichen: result.aktenzeichen || match.aktenzeichen || "", referenzen: [...(match.referenzen || []), ...(result.referenzen || [])].filter((v, i, a) => a.indexOf(v) === i) };
             const dbFields = { ...stateFields, letters: [...(match.letters || []).map(l => ({ ...l, document: l.document ? { mediaType: l.document.mediaType, isImage: l.document.isImage, isPdf: l.document.isPdf, fileName: l.document.fileName } : null })), nlForDb] };
+
+            const { error } = await dbUpdateProject(match.id, dbFields);
+            if (error) {
+              console.error("DB save failed:", error);
+              alert("⚠️ Speicherung fehlgeschlagen!\n\nFehler: " + (error.message || JSON.stringify(error)));
+            }
             setProjects(projects.map(p => p.id === match.id ? { ...p, ...stateFields } : p));
             setSavedToProject(match);
-            if (user?.id) { try { await dbUpdateProject(match.id, dbFields); } catch (e) { console.warn("DB update failed:", e); } }
           } else {
-            // Create new project
             const newProject = {
               name: result.projektname || (result.betreff ? `${result.betreff}` : `${result.dokumenttyp || result.kategorie} — ${result.behoerde}`),
               category: result.kategorie || "Sonstiges",
@@ -1726,29 +1762,25 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
               dokumenttyp: result.dokumenttyp || null,
               letters: [nlForDb],
             };
-            let saved = null;
-            if (user?.id) {
-              try {
-                const { data, error } = await dbCreateProject(user.id, newProject);
-                if (data) {
-                  saved = { ...data, referenzen: data.referenzen || [], letters: [nl] };
-                } else {
-                  console.warn("DB create failed:", error);
-                }
-              } catch (e) { console.warn("DB create exception:", e); }
+            const { data, error } = await dbCreateProject(user.id, newProject);
+            if (data) {
+              const saved = { ...data, referenzen: data.referenzen || [], letters: [nl] };
+              setProjects(prev => [saved, ...prev]);
+              setSavedToProject(saved);
+            } else {
+              const errMsg = error?.message || error?.code || JSON.stringify(error) || "Unbekannter Fehler";
+              console.error("DB create failed:", error);
+              alert("⚠️ Projekt konnte nicht in der Datenbank gespeichert werden!\n\nFehler: " + errMsg + "\n\nMögliche Ursachen:\n• Supabase ENV-Variablen fehlen in Vercel\n• RLS-Policies in Supabase nicht korrekt\n• User-Profil nicht angelegt (Trigger-Problem)\n\nDer Brief geht beim Reload verloren!");
+              // Show in UI but mark as local
+              const local = { ...newProject, id: "LOCAL_" + Date.now(), letters: [nl], _isLocal: true };
+              setProjects(prev => [local, ...prev]);
+              setSavedToProject(local);
             }
-            // Always save to state (from DB or locally)
-            if (!saved) { saved = { ...newProject, id: "local_" + Date.now(), letters: [nl] }; }
-            setProjects(prev => [saved, ...prev]);
-            setSavedToProject(saved);
           }
         }
       } catch (e) {
         console.error("Project save error:", e);
-        // Emergency fallback: still create a local project
-        const fallback = { id: "local_" + Date.now(), name: result.projektname || result.behoerde || "Neuer Vorgang", category: result.kategorie || "Sonstiges", status: "offen", ampel: result.ampel || "gelb", behoerde: result.behoerde || "Unbekannt", frist: null, aktenzeichen: "", referenzen: [], letters: [nl] };
-        setProjects(prev => [fallback, ...prev]);
-        setSavedToProject(fallback);
+        alert("⚠️ Schwerer Fehler beim Speichern: " + e.message);
       }
     }
     setAnalyzing(false);
@@ -1922,8 +1954,8 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
     ) : (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16 }}>
         {projects.map(p => (
-          <Card key={p.id} hover onClick={() => { setActiveProject(p); setView("project"); }} style={{ cursor: "pointer" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}><AmpelBadge level={p.ampel} /><Badge color={brand.textMuted} bg={brand.bgMuted}>{p.category}</Badge></div>
+          <Card key={p.id} hover onClick={() => { setActiveProject(p); setView("project"); }} style={{ cursor: "pointer", border: p._isLocal ? `2px solid ${brand.warning}` : undefined }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}><AmpelBadge level={p.ampel} /><div style={{ display: "flex", gap: 4 }}>{p._isLocal && <Badge color={brand.warning} bg={`${brand.warning}15`}>⚠ Nicht gespeichert</Badge>}<Badge color={brand.textMuted} bg={brand.bgMuted}>{p.category}</Badge></div></div>
             <h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, margin: "0 0 6px" }}>{p.name}</h3>
             <p style={{ fontSize: 13, color: brand.textMuted, margin: "0 0 12px" }}>{p.behoerde}{p.aktenzeichen ? ` · Az: ${p.aktenzeichen}` : ""}</p>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: brand.textMuted }}><span>{p.letters.length} Brief(e)</span>{p.frist && <span style={{ color: brand.danger, fontWeight: 600 }}>Frist: {p.frist.split("-").reverse().join(".")}</span>}</div>
@@ -2130,6 +2162,46 @@ function AdminPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
   const [dbData, setDbData] = useState({ users: [], projects: [], usage: [] });
+  const [editUser, setEditUser] = useState(null);
+  const [editForm, setEditForm] = useState({ plan: "free", discount_percent: 0, custom_limit: "", admin_notes: "", granted_until: "", subscription_active: false });
+  const [editSaving, setEditSaving] = useState(false);
+
+  const openEditUser = (u) => {
+    setEditUser(u);
+    setEditForm({
+      plan: u.plan || "free",
+      discount_percent: u.discount_percent || 0,
+      custom_limit: u.custom_limit || "",
+      admin_notes: u.admin_notes || "",
+      granted_until: u.granted_until || "",
+      subscription_active: u.subscription_active || false,
+    });
+  };
+
+  const handleSaveEditUser = async () => {
+    if (!editUser) return;
+    setEditSaving(true);
+    try {
+      const updates = {
+        plan: editForm.plan,
+        discount_percent: parseInt(editForm.discount_percent) || 0,
+        custom_limit: editForm.custom_limit ? parseInt(editForm.custom_limit) : null,
+        admin_notes: editForm.admin_notes || null,
+        granted_until: editForm.granted_until || null,
+        subscription_active: editForm.subscription_active,
+      };
+      const { error } = await supabase.from('profiles').update(updates).eq('id', editUser.id);
+      if (error) {
+        alert("Fehler beim Speichern: " + (error.message || JSON.stringify(error)));
+      } else {
+        setEditUser(null);
+        setRefreshKey(k => k + 1);
+      }
+    } catch (e) {
+      alert("Fehler: " + e.message);
+    }
+    setEditSaving(false);
+  };
 
   // ── Load REAL data from Supabase ──
   useEffect(() => {
@@ -2193,6 +2265,10 @@ function AdminPage() {
         registered: u.created_at ? new Date(u.created_at).toLocaleDateString("de-DE") : "—",
         is_admin: u.is_admin,
         subscription_active: u.subscription_active,
+        discount_percent: u.discount_percent || 0,
+        custom_limit: u.custom_limit,
+        admin_notes: u.admin_notes,
+        granted_until: u.granted_until,
       };
     });
 
@@ -2226,6 +2302,7 @@ function AdminPage() {
       setRefreshKey(k => k + 1);
     } catch (e) { alert("Fehler: " + e.message); }
   };
+
 
   if (loading) return <div style={{ padding: 60, textAlign: "center" }}>
     <RefreshCw size={32} style={{ animation: "spin 1s linear infinite", color: brand.primary }} />
@@ -2293,11 +2370,18 @@ function AdminPage() {
         <tbody>{filtered.map(u => <tr key={u.id} style={{ borderBottom: `1px solid ${brand.borderLight}` }}>
           <td style={{ padding: "14px 16px", fontWeight: 600 }}>{u.name}{u.is_admin && <span style={{ marginLeft: 6, fontSize: 10, padding: "2px 6px", borderRadius: 4, background: brand.accent, color: "#fff", fontWeight: 700 }}>ADMIN</span>}</td>
           <td style={{ padding: "14px 16px", color: brand.textMuted }}>{u.email}</td>
-          <td style={{ padding: "14px 16px" }}><Badge color={u.plan === "pro" ? brand.accent : u.plan === "plus" ? brand.primary : brand.textMuted} bg={u.plan === "pro" ? `${brand.accent}15` : u.plan === "plus" ? brand.bgMuted : `${brand.textMuted}10`}>{u.plan.toUpperCase()}</Badge></td>
+          <td style={{ padding: "14px 16px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+              <Badge color={u.plan === "lifetime" ? brand.accent : u.plan === "pro" ? brand.accent : u.plan === "plus" ? brand.primary : brand.textMuted} bg={u.plan === "lifetime" ? `${brand.accent}15` : u.plan === "pro" ? `${brand.accent}15` : u.plan === "plus" ? brand.bgMuted : `${brand.textMuted}10`}>{u.plan.toUpperCase()}</Badge>
+              {u.discount_percent > 0 && <Badge color={brand.warning} bg={`${brand.warning}15`}>-{u.discount_percent}%</Badge>}
+              {u.granted_until && <span title={`Gültig bis ${u.granted_until}`} style={{ fontSize: 10, color: brand.textMuted }}>⏱</span>}
+              {u.admin_notes && <span title={u.admin_notes} style={{ fontSize: 10, cursor: "help" }}>📝</span>}
+            </div>
+          </td>
           <td style={{ padding: "14px 16px" }}>{u.projects}</td>
           <td style={{ padding: "14px 16px" }}>{u.analyses} <span style={{ color: brand.textMuted, fontSize: 12 }}>({u.analysesThisMonth} Mo.)</span></td>
           <td style={{ padding: "14px 16px", color: brand.textMuted, fontSize: 12 }}>{u.registered}</td>
-          <td style={{ padding: "14px 16px" }}>{!u.is_admin && <button onClick={() => handleDeleteUser(u.id, u.email)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Trash2 size={16} color={brand.danger} /></button>}</td>
+          <td style={{ padding: "14px 16px" }}><div style={{ display: "flex", gap: 8 }}><button onClick={() => openEditUser(u)} title="Bearbeiten" style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Edit3 size={16} color={brand.primary} /></button>{!u.is_admin && <button onClick={() => handleDeleteUser(u.id, u.email)} title="Löschen" style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Trash2 size={16} color={brand.danger} /></button>}</div></td>
         </tr>)}</tbody>
       </table></div></Card>}
     </>}
@@ -2307,6 +2391,91 @@ function AdminPage() {
       <Card><h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>System-Status</h3><div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>{[["Frontend","Online"],["Supabase DB","Online"],["Anthropic API","Online"],["Mollie","Online"]].map(([s,st]) => <div key={s} style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}><span style={{ fontWeight: 600 }}>{s}</span><span style={{ display: "flex", alignItems: "center", gap: 6, color: brand.success, fontWeight: 600 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: brand.success }} />{st}</span></div>)}</div></Card>
       <Card><h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>Datenbank</h3><div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>{[["Nutzer", totalUsers],["Projekte", totalProjects],["Usage-Einträge", dbData.usage.length]].map(([l,v]) => <div key={l} style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}><span style={{ color: brand.textMuted }}>{l}</span><span style={{ fontWeight: 700 }}>{v}</span></div>)}</div></Card>
     </div>}
+
+    {/* ── EDIT USER MODAL ── */}
+    <Modal open={!!editUser} onClose={() => setEditUser(null)} title={`Nutzer bearbeiten: ${editUser?.name || ""}`} wide>
+      {editUser && <div>
+        <div style={{ padding: 14, borderRadius: 10, background: brand.bgMuted, marginBottom: 20 }}>
+          <div style={{ fontSize: 13, color: brand.textMuted, marginBottom: 4 }}>E-Mail</div>
+          <div style={{ fontSize: 15, fontWeight: 600, color: brand.text, marginBottom: 8 }}>{editUser.email}</div>
+          <div style={{ display: "flex", gap: 16, fontSize: 13, color: brand.textMuted, flexWrap: "wrap" }}>
+            <span><strong style={{ color: brand.text }}>{editUser.projects}</strong> Projekte</span>
+            <span><strong style={{ color: brand.text }}>{editUser.analyses}</strong> Analysen gesamt</span>
+            <span><strong style={{ color: brand.text }}>{editUser.analysesThisMonth}</strong> diesen Monat</span>
+            <span>Registriert: <strong style={{ color: brand.text }}>{editUser.registered}</strong></span>
+          </div>
+        </div>
+
+        <h4 style={{ fontSize: 16, fontWeight: 700, color: brand.text, margin: "0 0 12px" }}>Plan zuweisen</h4>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8, marginBottom: 16 }}>
+          {[["free","Free","0€"],["plus","Plus","4,99€/Mo"],["pro","Pro","9,99€/Mo"],["business","Business","29,99€/Mo"],["lifetime","Lifetime","Einmalig"]].map(([id, name, price]) => (
+            <button key={id} onClick={() => setEditForm(f => ({ ...f, plan: id, subscription_active: id !== "free" }))} style={{ padding: "12px 8px", borderRadius: 10, border: `2px solid ${editForm.plan === id ? brand.primary : brand.borderLight}`, background: editForm.plan === id ? brand.bgMuted : "#fff", cursor: "pointer", fontFamily: "inherit", textAlign: "center" }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: editForm.plan === id ? brand.primary : brand.text }}>{name}</div>
+              <div style={{ fontSize: 11, color: brand.textMuted, marginTop: 2 }}>{price}</div>
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+          <div>
+            <label style={{ display: "block", marginBottom: 6, fontSize: 14, fontWeight: 600, color: brand.text }}>Rabatt für nächste Zahlung (%)</label>
+            <input type="number" min="0" max="100" value={editForm.discount_percent} onChange={e => setEditForm(f => ({ ...f, discount_percent: e.target.value }))} placeholder="0" style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${brand.borderLight}`, fontSize: 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box" }} />
+            <p style={{ fontSize: 11, color: brand.textMuted, margin: "4px 0 0" }}>Wird bei nächster Mollie-Zahlung angewandt</p>
+          </div>
+          <div>
+            <label style={{ display: "block", marginBottom: 6, fontSize: 14, fontWeight: 600, color: brand.text }}>Individuelles Limit (Analysen/Monat)</label>
+            <input type="number" min="0" value={editForm.custom_limit} onChange={e => setEditForm(f => ({ ...f, custom_limit: e.target.value }))} placeholder="leer = Plan-Standard" style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${brand.borderLight}`, fontSize: 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box" }} />
+            <p style={{ fontSize: 11, color: brand.textMuted, margin: "4px 0 0" }}>Überschreibt das Plan-Limit</p>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: "block", marginBottom: 6, fontSize: 14, fontWeight: 600, color: brand.text }}>Premium-Zugang gültig bis (optional)</label>
+          <input type="date" value={editForm.granted_until} onChange={e => setEditForm(f => ({ ...f, granted_until: e.target.value }))} style={{ padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${brand.borderLight}`, fontSize: 14, fontFamily: "inherit", outline: "none" }} />
+          <p style={{ fontSize: 11, color: brand.textMuted, margin: "4px 0 0" }}>Bei Lifetime leer lassen. Bei Test-Zugang: Ablaufdatum setzen.</p>
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: "block", marginBottom: 6, fontSize: 14, fontWeight: 600, color: brand.text }}>Admin-Notizen (intern, für dich)</label>
+          <textarea value={editForm.admin_notes} onChange={e => setEditForm(f => ({ ...f, admin_notes: e.target.value }))} placeholder="z.B. 'Test-Account', 'VIP-Kunde — 50% Rabatt versprochen', 'Beschwerde am 15.04.'" rows="3" style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${brand.borderLight}`, fontSize: 14, fontFamily: "inherit", outline: "none", resize: "vertical", boxSizing: "border-box" }} />
+        </div>
+
+        <div style={{ padding: 10, borderRadius: 8, background: `${brand.warning}10`, border: `1px solid ${brand.warning}30`, marginBottom: 20, fontSize: 12, color: brand.text }}>
+          ⚠️ <strong>Hinweis:</strong> Plan-Änderungen hier umgehen Mollie. Bei "Lifetime" oder kostenpflichtigen Plänen erfolgt KEINE Abbuchung — der Zugang wird einfach freigeschaltet (z.B. für Test-Accounts oder Kulanz). Bestehende Mollie-Abos müssen separat in Mollie verwaltet werden.
+        </div>
+
+        <h4 style={{ fontSize: 16, fontWeight: 700, color: brand.text, margin: "0 0 12px" }}>Schnellaktionen</h4>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 24 }}>
+          <Btn variant="accent" size="sm" onClick={() => setEditForm(f => ({ ...f, plan: "lifetime", subscription_active: true, granted_until: "", admin_notes: (f.admin_notes ? f.admin_notes + "\n" : "") + `Lifetime geschenkt am ${new Date().toLocaleDateString("de-DE")}` }))} disabled={editSaving}>
+            🎁 Lifetime schenken
+          </Btn>
+          <Btn variant="outline" size="sm" onClick={() => setEditForm(f => ({ ...f, plan: "pro", subscription_active: true, granted_until: new Date(Date.now() + 30*24*60*60*1000).toISOString().split("T")[0], admin_notes: (f.admin_notes ? f.admin_notes + "\n" : "") + `30-Tage Pro-Test ab ${new Date().toLocaleDateString("de-DE")}` }))} disabled={editSaving}>
+            🆓 30-Tage Pro-Test
+          </Btn>
+          <Btn variant="outline" size="sm" onClick={() => setEditForm(f => ({ ...f, discount_percent: 50 }))} disabled={editSaving}>
+            💰 50% Rabatt setzen
+          </Btn>
+          <Btn variant="outline" size="sm" onClick={async () => {
+            if (!confirm("Analysen-Zähler dieses Nutzers für aktuellen Monat auf 0 setzen?")) return;
+            const cm = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+            try {
+              await supabase.from('usage_tracking').delete().eq('user_id', editUser.id).eq('month', cm);
+              alert("Zähler zurückgesetzt.");
+              setRefreshKey(k => k + 1);
+            } catch (e) { alert("Fehler: " + e.message); }
+          }} disabled={editSaving}>
+            <RefreshCw size={14} /> Zähler zurücksetzen
+          </Btn>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", paddingTop: 16, borderTop: `1px solid ${brand.borderLight}` }}>
+          <Btn variant="ghost" onClick={() => setEditUser(null)} disabled={editSaving}>Abbrechen</Btn>
+          <Btn variant="primary" onClick={handleSaveEditUser} disabled={editSaving}>
+            {editSaving ? <><RefreshCw size={14} style={{ animation: "spin 1s linear infinite" }} /> Speichere...</> : <><CheckCircle size={14} /> Änderungen speichern</>}
+          </Btn>
+        </div>
+      </div>}
+    </Modal>
   </div>;
 }
 

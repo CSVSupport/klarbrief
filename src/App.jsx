@@ -9,15 +9,6 @@ import { FileText, Shield, Clock, Search, Upload, ChevronRight, Check, X, Menu, 
 
 const ANTHROPIC_MODEL = "claude-sonnet-4-20250514";
 
-// Digistore24 Produkt-IDs (bitte nach Anlage in Digistore durch echte IDs ersetzen)
-const DIGISTORE = {
-  plus: "PRODUCT_ID_PLUS",        // 4,99€/Mo
-  pro: "PRODUCT_ID_PRO",          // 9,99€/Mo
-  lifetime: "PRODUCT_ID_LIFETIME", // 59€ einmalig
-  affiliateUrl: "https://www.digistore24.com/product/PRODUCT_ID_LIFETIME",
-  partnerProgramUrl: "https://www.digistore24.com/affiliates/signup/PRODUCT_ID_LIFETIME",
-};
-
 const brand = {
   primary: "#1e5fa8", primaryLight: "#3b82d4", primaryDark: "#15467f",
   accent: "#f97316", accentHover: "#ea580c", accentLight: "#fb923c",
@@ -452,7 +443,7 @@ function Footer({ setPage }) {
         </div>
         <div>
           <h4 style={{ fontSize: 14, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16, color: "rgba(255,255,255,0.4)" }}>Produkt</h4>
-          {["features", "pricing", "angebot", "usecases", "blog", "partner"].map(p => <div key={p}><button onClick={() => setPage(p)} style={{ display: "block", padding: "6px 0", background: "none", border: "none", color: "rgba(255,255,255,0.7)", fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>{p === "features" ? "Funktionen" : p === "pricing" ? "Preise" : p === "angebot" ? "Lifetime-Angebot ⚡" : p === "usecases" ? "Anwendungsfälle" : p === "partner" ? "Partnerprogramm" : "Blog"}</button></div>)}
+          {["features", "pricing", "angebot", "usecases", "blog"].map(p => <div key={p}><button onClick={() => setPage(p)} style={{ display: "block", padding: "6px 0", background: "none", border: "none", color: "rgba(255,255,255,0.7)", fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>{p === "features" ? "Funktionen" : p === "pricing" ? "Preise" : p === "angebot" ? "Lifetime-Angebot ⚡" : p === "usecases" ? "Anwendungsfälle" : "Blog"}</button></div>)}
         </div>
         <div>
           <h4 style={{ fontSize: 14, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16, color: "rgba(255,255,255,0.4)" }}>Rechtliches</h4>
@@ -1773,14 +1764,7 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
             <div style={{ fontSize: 12, color: brand.textMuted, marginTop: 4, marginBottom: 12 }}>{p.desc}</div>
             {profile.plan !== p.id && p.id !== "free" && (
               <Btn size="sm" variant={p.id === "lifetime" ? "accent" : p.id === "pro" ? "accent" : "primary"} onClick={async () => {
-                // Lifetime → Digistore24
-                if (p.id === "lifetime") {
-                  const pid = DIGISTORE.lifetime;
-                  if (pid.startsWith("PRODUCT_ID_")) { alert("Digistore24 Produkt-ID noch nicht konfiguriert."); return; }
-                  window.location.href = `https://www.digistore24.com/product/${pid}?email=${encodeURIComponent(profile.email)}`;
-                  return;
-                }
-                // Plus/Pro → Mollie
+                // All plans (including Lifetime) → Mollie
                 try {
                   const resp = await fetch("/api/mollie/checkout", {
                     method: "POST", headers: { "Content-Type": "application/json" },
@@ -2233,17 +2217,33 @@ function AdminPage() {
 // OFFER / VERKAUFSSEITE
 // ═══════════════════════════════════════════
 function OfferPage({ setPage }) {
-  const [checkout, setCheckout] = useState(null);
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
 
-  const startCheckout = (plan) => {
-    // Digistore24 Checkout URL
-    const productId = DIGISTORE[plan];
-    if (productId && productId.startsWith("PRODUCT_ID_")) {
-      alert("Digistore24 Produkt-ID noch nicht konfiguriert. Bitte in App.jsx die DIGISTORE Konstanten setzen.");
+  const startCheckout = async (plan) => {
+    // Check if user is logged in
+    const session = await getSession();
+    if (!session?.user) {
+      alert("Bitte registriere dich zuerst kostenlos, um den Kauf abzuschließen.");
+      setPage("register");
       return;
     }
-    const email = "";
-    window.location.href = `https://www.digistore24.com/product/${productId}?email=${encodeURIComponent(email)}`;
+    setCheckoutLoading(true);
+    try {
+      const resp = await fetch("/api/mollie/checkout", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: session.user.email, name: session.user.user_metadata?.name || session.user.email, plan }),
+      });
+      const data = await resp.json();
+      if (data.checkoutUrl) {
+        window.location.href = data.checkoutUrl;
+      } else {
+        alert("Fehler beim Erstellen der Zahlung: " + (data.error || "Unbekannt"));
+        setCheckoutLoading(false);
+      }
+    } catch (e) {
+      alert("Verbindungsfehler. Bitte versuche es erneut.");
+      setCheckoutLoading(false);
+    }
   };
 
   return <div style={{ background: brand.bg }}>
@@ -2267,7 +2267,7 @@ function OfferPage({ setPage }) {
         </div>
         <div style={{ display: "flex", gap: 20, justifyContent: "center", flexWrap: "wrap", fontSize: 13, color: brand.textMuted }}>
           <span>✓ 14 Tage Geld-zurück-Garantie</span>
-          <span>✓ Sicher über Digistore24</span>
+          <span>✓ Sichere Zahlung mit Mollie</span>
           <span>✓ Sofortiger Zugang</span>
         </div>
       </div>
@@ -2361,7 +2361,7 @@ function OfferPage({ setPage }) {
                 <span>⚡ Sofort-Zugang</span>
               </div>
             </div>
-            <p style={{ fontSize: 12, color: brand.textMuted, marginTop: 12 }}>Zahlungsabwicklung über Digistore24 — unser zertifizierter Reseller</p>
+            <p style={{ fontSize: 12, color: brand.textMuted, marginTop: 12 }}>Zahlungsabwicklung sicher über Mollie — SEPA, Kreditkarte, PayPal & mehr</p>
           </div>
         </div>
       </div>
@@ -2395,11 +2395,11 @@ function OfferPage({ setPage }) {
 // ═══════════════════════════════════════════
 function ThankYouPage({ setPage }) {
   useEffect(() => {
-    // Parse Digistore24 return params if present
+    // Parse Mollie return params if present
     const params = new URLSearchParams(window.location.search);
-    const orderId = params.get("order_id") || params.get("receipt");
+    const orderId = params.get("order_id") || params.get("payment_id");
     if (orderId) {
-      console.log("Digistore24 Bestellung:", orderId);
+      console.log("Mollie Bestellung:", orderId);
     }
   }, []);
 
@@ -2417,7 +2417,7 @@ function ThankYouPage({ setPage }) {
         <h3 style={{ fontSize: 20, fontWeight: 700, color: brand.text, margin: "0 0 20px" }}>So geht's weiter:</h3>
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           {[
-            { n: "1", t: "E-Mail prüfen", d: "Du erhältst eine Bestätigungs-E-Mail von Digistore24 mit deinem Rechnungsbeleg." },
+            { n: "1", t: "Bestätigung erhalten", d: "Du erhältst eine Zahlungsbestätigung per E-Mail mit deinem Rechnungsbeleg." },
             { n: "2", t: "Account erstellen", d: "Registriere dich mit der E-Mail-Adresse, die du beim Kauf verwendet hast." },
             { n: "3", t: "Losschreiben", d: "Fotografiere deinen ersten Brief — die KI übersetzt ihn in Sekunden." },
           ].map(s => (
@@ -2440,115 +2440,6 @@ function ThankYouPage({ setPage }) {
     </div>
   </div>;
 }
-
-// ═══════════════════════════════════════════
-// PARTNER / AFFILIATE PAGE
-// ═══════════════════════════════════════════
-function PartnerPage({ setPage }) {
-  return <div style={{ background: brand.bg }}>
-    {/* Hero */}
-    <section style={{ padding: "80px 20px 60px", textAlign: "center", background: `linear-gradient(180deg, ${brand.bgMuted} 0%, ${brand.bg} 100%)` }}>
-      <div style={{ maxWidth: 800, margin: "0 auto" }}>
-        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 14px", borderRadius: 20, background: `${brand.accent}15`, marginBottom: 20 }}>
-          <TrendingUp size={14} style={{ color: brand.accent }} />
-          <span style={{ fontSize: 13, fontWeight: 700, color: brand.accentHover }}>PARTNERPROGRAMM</span>
-        </div>
-        <h1 style={{ fontSize: "clamp(32px, 5vw, 48px)", fontWeight: 900, color: brand.text, margin: "0 0 20px", lineHeight: 1.15 }}>
-          Verdiene Geld mit <span style={{ color: brand.primary }}>KlarBrief24</span>
-        </h1>
-        <p style={{ fontSize: 20, color: brand.textMuted, lineHeight: 1.6, margin: "0 auto 32px", maxWidth: 600 }}>
-          Empfiehl KlarBrief24 weiter und verdiene <strong style={{ color: brand.accent }}>bis zu 50% Provision</strong> — für jeden Verkauf, den du vermittelst.
-        </p>
-        <Btn size="lg" variant="accent" onClick={() => window.open(DIGISTORE.partnerProgramUrl, "_blank")}>
-          <ExternalLink size={18} /> Jetzt Partner werden
-        </Btn>
-      </div>
-    </section>
-
-    {/* Commission Box */}
-    <section style={{ padding: "60px 20px", background: "#fff" }}>
-      <div style={{ maxWidth: 900, margin: "0 auto" }}>
-        <h2 style={{ fontSize: 32, fontWeight: 800, color: brand.text, textAlign: "center", margin: "0 0 12px" }}>Deine Vorteile als Partner</h2>
-        <p style={{ fontSize: 16, color: brand.textMuted, textAlign: "center", margin: "0 0 48px" }}>Abgewickelt über Digistore24 — Deutschlands führende Plattform für digitale Produkte</p>
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 24 }}>
-          {[
-            { icon: TrendingUp, t: "Bis zu 50% Provision", d: "Pro verkauftem Lifetime-Zugang erhältst du bis zu 29,50€ — direkt auf dein Konto." },
-            { icon: Clock, t: "Monatliche Auszahlung", d: "Zuverlässige Zahlungen von Digistore24 — pünktlich und nachverfolgbar." },
-            { icon: BarChart3, t: "Echtzeit-Statistiken", d: "Sieh sofort, wie viele Klicks und Verkäufe du generiert hast." },
-            { icon: Users, t: "Marketing-Material", d: "Banner, Texte und Landingpages — alles fertig für dich bereitgestellt." },
-            { icon: Shield, t: "Lange Cookie-Laufzeit", d: "60 Tage Tracking — auch wenn der Kunde später kauft, bekommst du die Provision." },
-            { icon: Award, t: "2nd-Tier verfügbar", d: "Wirb weitere Partner und verdiene zusätzlich an deren Verkäufen." },
-          ].map((b, i) => (
-            <div key={i} style={{ padding: 24, borderRadius: 12, background: brand.bgMuted, border: `1px solid ${brand.borderLight}` }}>
-              <div style={{ width: 48, height: 48, borderRadius: 12, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}><b.icon size={24} style={{ color: brand.primary }} /></div>
-              <h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, margin: "0 0 8px" }}>{b.t}</h3>
-              <p style={{ fontSize: 14, color: brand.textMuted, lineHeight: 1.6, margin: 0 }}>{b.d}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-
-    {/* How it works */}
-    <section style={{ padding: "80px 20px", background: brand.bgMuted }}>
-      <div style={{ maxWidth: 900, margin: "0 auto" }}>
-        <h2 style={{ fontSize: 32, fontWeight: 800, color: brand.text, textAlign: "center", margin: "0 0 48px" }}>So funktioniert's</h2>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 24 }}>
-          {[
-            { n: "1", t: "Bei Digistore24 registrieren", d: "Kostenlose Anmeldung als Affiliate-Partner." },
-            { n: "2", t: "Partner-Link erhalten", d: "Dein persönlicher Link zum Teilen." },
-            { n: "3", t: "Link teilen", d: "Auf Social Media, Blog, YouTube, E-Mail-Listen." },
-            { n: "4", t: "Provision kassieren", d: "Monatliche Auszahlung auf dein Konto." },
-          ].map(s => (
-            <div key={s.n} style={{ padding: 24, borderRadius: 16, background: "#fff", textAlign: "center" }}>
-              <div style={{ width: 48, height: 48, borderRadius: "50%", background: `linear-gradient(135deg, ${brand.primary}, ${brand.accent})`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 12px", color: "#fff", fontSize: 20, fontWeight: 800 }}>{s.n}</div>
-              <h3 style={{ fontSize: 16, fontWeight: 700, color: brand.text, margin: "0 0 6px" }}>{s.t}</h3>
-              <p style={{ fontSize: 13, color: brand.textMuted, lineHeight: 1.5, margin: 0 }}>{s.d}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-
-    {/* Target Audience */}
-    <section style={{ padding: "80px 20px", background: "#fff" }}>
-      <div style={{ maxWidth: 900, margin: "0 auto" }}>
-        <h2 style={{ fontSize: 32, fontWeight: 800, color: brand.text, textAlign: "center", margin: "0 0 48px" }}>Für wen lohnt sich das Partnerprogramm?</h2>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 20 }}>
-          {[
-            { t: "Finanz-Blogger", d: "Deine Leser suchen Lösungen für Steuer- und Bescheidprobleme." },
-            { t: "Ratgeber-YouTuber", d: "Zeige KlarBrief24 in deinen Videos — das Tool verkauft sich praktisch selbst." },
-            { t: "Steuerberater & Rechtsanwälte", d: "Empfiehl deinen Mandanten ein hilfreiches Zusatz-Tool." },
-            { t: "Soziale Einrichtungen", d: "Verbände und Beratungsstellen profitieren doppelt." },
-            { t: "Content Creator", d: "Newsletter, TikTok, Instagram — überall passt KlarBrief24 rein." },
-            { t: "Affiliate-Profis", d: "Lifetime-Deals mit niedrigem Preispunkt konvertieren überdurchschnittlich gut." },
-          ].map((a, i) => (
-            <div key={i} style={{ padding: 20, borderRadius: 12, border: `1px solid ${brand.borderLight}` }}>
-              <h3 style={{ fontSize: 16, fontWeight: 700, color: brand.text, margin: "0 0 6px" }}>{a.t}</h3>
-              <p style={{ fontSize: 14, color: brand.textMuted, lineHeight: 1.6, margin: 0 }}>{a.d}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-
-    {/* Final CTA */}
-    <section style={{ padding: "80px 20px", background: `linear-gradient(135deg, ${brand.primary}, ${brand.primaryDark})`, textAlign: "center" }}>
-      <div style={{ maxWidth: 700, margin: "0 auto" }}>
-        <h2 style={{ fontSize: 36, fontWeight: 800, color: "#fff", margin: "0 0 16px" }}>Bereit durchzustarten?</h2>
-        <p style={{ fontSize: 18, color: "rgba(255,255,255,0.85)", margin: "0 0 32px" }}>Registriere dich jetzt kostenlos bei Digistore24 und erhalte sofort deinen Partner-Link.</p>
-        <Btn size="lg" variant="accent" onClick={() => window.open(DIGISTORE.partnerProgramUrl, "_blank")}>
-          <ExternalLink size={18} /> Jetzt kostenlos registrieren
-        </Btn>
-        <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", marginTop: 20 }}>
-          Bei Fragen: <a href="mailto:partner@csv-support.de" style={{ color: "#fff" }}>partner@csv-support.de</a>
-        </p>
-      </div>
-    </section>
-  </div>;
-}
-
 // ═══════════════════════════════════════════
 // LEGAL PAGES
 // ═══════════════════════════════════════════
@@ -2684,7 +2575,6 @@ export default function App() {
       case "admin": return isLoggedIn && isAdmin ? <AdminPage /> : <AuthPage mode="login" setPage={setPage} onLogin={setUser} />;
       case "angebot": return <OfferPage setPage={setPage} />;
       case "danke": return <ThankYouPage setPage={setPage} />;
-      case "partner": return <PartnerPage setPage={setPage} />;
       case "impressum": case "datenschutz": case "agb": case "widerruf": return <LegalPage page={page} />;
       default: return <HomePage setPage={setPage} />;
     }

@@ -8,6 +8,15 @@ import { FileText, Shield, Clock, Search, Upload, ChevronRight, Check, X, Menu, 
 
 const ANTHROPIC_MODEL = "claude-sonnet-4-20250514";
 
+// Digistore24 Produkt-IDs (bitte nach Anlage in Digistore durch echte IDs ersetzen)
+const DIGISTORE = {
+  plus: "PRODUCT_ID_PLUS",        // 4,99€/Mo
+  pro: "PRODUCT_ID_PRO",          // 9,99€/Mo
+  lifetime: "PRODUCT_ID_LIFETIME", // 59€ einmalig
+  affiliateUrl: "https://www.digistore24.com/product/PRODUCT_ID_LIFETIME",
+  partnerProgramUrl: "https://www.digistore24.com/affiliates/signup/PRODUCT_ID_LIFETIME",
+};
+
 const brand = {
   primary: "#1e5fa8", primaryLight: "#3b82d4", primaryDark: "#15467f",
   accent: "#f97316", accentHover: "#ea580c", accentLight: "#fb923c",
@@ -401,8 +410,8 @@ function Navbar({ page, setPage, isLoggedIn, isAdmin, onLogout }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const navItems = [
     { id: "home", label: "Start" }, { id: "features", label: "Funktionen" },
-    { id: "usecases", label: "Anwendungsfälle" }, { id: "pricing", label: "Preise" },
-    { id: "blog", label: "Blog" }, { id: "about", label: "Über uns" },
+    { id: "usecases", label: "Anwendungsfälle" }, { id: "angebot", label: "Angebot", highlight: true },
+    { id: "pricing", label: "Preise" }, { id: "blog", label: "Blog" }, { id: "about", label: "Über uns" },
   ];
   return <nav style={{ position: "sticky", top: 0, zIndex: 100, background: "rgba(255,255,255,0.92)", backdropFilter: "blur(12px)", borderBottom: `1px solid ${brand.borderLight}`, padding: "0 20px" }}>
     <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", height: 64 }}>
@@ -410,7 +419,7 @@ function Navbar({ page, setPage, isLoggedIn, isAdmin, onLogout }) {
         <img src="/logo.png" alt="KlarBrief24" style={{ height: 38, width: "auto" }} />
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 4 }} className="nav-desktop">
-        {navItems.map(n => <button key={n.id} onClick={() => setPage(n.id)} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: page === n.id ? brand.bgMuted : "transparent", color: page === n.id ? brand.primary : brand.textMuted, fontWeight: 600, fontSize: 14, cursor: "pointer", transition: "all 0.2s", fontFamily: "inherit" }}>{n.label}</button>)}
+        {navItems.map(n => <button key={n.id} onClick={() => setPage(n.id)} style={{ padding: "8px 14px", borderRadius: 8, border: n.highlight ? `1.5px solid ${brand.accent}` : "none", background: n.highlight ? `${brand.accent}08` : (page === n.id ? brand.bgMuted : "transparent"), color: n.highlight ? brand.accentHover : (page === n.id ? brand.primary : brand.textMuted), fontWeight: n.highlight ? 700 : 600, fontSize: 14, cursor: "pointer", transition: "all 0.2s", fontFamily: "inherit" }}>{n.label}{n.highlight && " ⚡"}</button>)}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         {isLoggedIn ? <>
@@ -442,7 +451,7 @@ function Footer({ setPage }) {
         </div>
         <div>
           <h4 style={{ fontSize: 14, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16, color: "rgba(255,255,255,0.4)" }}>Produkt</h4>
-          {["features", "pricing", "usecases", "blog"].map(p => <div key={p}><button onClick={() => setPage(p)} style={{ display: "block", padding: "6px 0", background: "none", border: "none", color: "rgba(255,255,255,0.7)", fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>{p === "features" ? "Funktionen" : p === "pricing" ? "Preise" : p === "usecases" ? "Anwendungsfälle" : "Blog"}</button></div>)}
+          {["features", "pricing", "angebot", "usecases", "blog", "partner"].map(p => <div key={p}><button onClick={() => setPage(p)} style={{ display: "block", padding: "6px 0", background: "none", border: "none", color: "rgba(255,255,255,0.7)", fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>{p === "features" ? "Funktionen" : p === "pricing" ? "Preise" : p === "angebot" ? "Lifetime-Angebot ⚡" : p === "usecases" ? "Anwendungsfälle" : p === "partner" ? "Partnerprogramm" : "Blog"}</button></div>)}
         </div>
         <div>
           <h4 style={{ fontSize: 14, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16, color: "rgba(255,255,255,0.4)" }}>Rechtliches</h4>
@@ -1152,15 +1161,33 @@ function AuthPage({ mode, setPage, onLogin }) {
   const ADMIN_EMAIL = "info@csv-support.de";
 
   const handleSubmit = () => {
+    const normEmail = email.trim().toLowerCase();
+    if (!normEmail) return;
     let userData;
-    if (mode === "register" && name && email && pass) {
-      userData = { name, email, isAdmin: email.toLowerCase() === ADMIN_EMAIL };
-    } else if (mode === "login" && email && pass) {
-      userData = { name: email.split("@")[0], email, isAdmin: email.toLowerCase() === ADMIN_EMAIL };
+    if (mode === "register" && name && normEmail && pass) {
+      userData = { name: name.trim(), email: normEmail, isAdmin: normEmail === ADMIN_EMAIL };
+      // Register in user registry so admin sees new users
+      try {
+        const registry = JSON.parse(localStorage.getItem("kb_user_registry") || "[]");
+        if (!registry.find(u => u.email === normEmail)) {
+          registry.push({ email: normEmail, name: name.trim(), registeredAt: new Date().toISOString() });
+          localStorage.setItem("kb_user_registry", JSON.stringify(registry));
+        }
+      } catch {}
+    } else if (mode === "login" && normEmail && pass) {
+      userData = { name: normEmail.split("@")[0], email: normEmail, isAdmin: normEmail === ADMIN_EMAIL };
+      // Also track in registry on first login (for users who existed before registry was added)
+      try {
+        const registry = JSON.parse(localStorage.getItem("kb_user_registry") || "[]");
+        if (!registry.find(u => u.email === normEmail)) {
+          registry.push({ email: normEmail, name: normEmail.split("@")[0], registeredAt: new Date().toISOString() });
+          localStorage.setItem("kb_user_registry", JSON.stringify(registry));
+        }
+      } catch {}
     } else return;
 
     // Check if 2FA is enabled for this user
-    const twoFA = get2FAConfig(email.toLowerCase());
+    const twoFA = get2FAConfig(normEmail);
     if (mode === "login" && twoFA?.enabled) {
       setPendingUser(userData);
       setStep("2fa");
@@ -1174,7 +1201,7 @@ function AuthPage({ mode, setPage, onLogin }) {
 
   const handleVerify2FA = async () => {
     if (!totpInput || totpInput.length !== 6) { setTotpError("Bitte 6-stelligen Code eingeben"); return; }
-    const twoFA = get2FAConfig(email.toLowerCase());
+    const twoFA = get2FAConfig(email.trim().toLowerCase());
     if (!twoFA?.secret) { setTotpError("2FA-Konfiguration nicht gefunden"); return; }
     const valid = await verifyTOTP(twoFA.secret, totpInput);
     if (valid) {
@@ -1391,7 +1418,7 @@ function DashboardPage({ user, setUser, setPage }) {
   useEffect(() => { try { localStorage.setItem(storageKey("profile"), JSON.stringify(profile)); } catch(e) { console.warn("Storage full", e); } }, [profile]);
 
   // ── Usage Tracking & Limits ──
-  const PLAN_LIMITS = { free: 3, plus: Infinity, pro: Infinity, business: Infinity };
+  const PLAN_LIMITS = { free: 3, plus: Infinity, pro: Infinity, business: Infinity, lifetime: Infinity };
   const currentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
   const [usage, setUsage] = useState(() => loadState("usage", {}));
   const monthlyCount = usage[currentMonth] || 0;
@@ -1640,14 +1667,22 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
         </div>
       )}
       <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap" }}>
-        {[{ id: "free", name: "Free", price: "0€", desc: "3 Analysen/Monat", mo: "" },{ id: "plus", name: "Plus", price: "4,99€", desc: "Unbegrenzt + Archiv", mo: "/Monat" },{ id: "pro", name: "Pro", price: "9,99€", desc: "Alles + Briefe + Vertragsprüfung", mo: "/Monat" }].map(p => (
+        {[{ id: "free", name: "Free", price: "0€", desc: "3 Analysen/Monat", mo: "" },{ id: "plus", name: "Plus", price: "4,99€", desc: "Unbegrenzt + Archiv", mo: "/Monat" },{ id: "pro", name: "Pro", price: "9,99€", desc: "Alles + Briefe + Vertragsprüfung", mo: "/Monat" },{ id: "lifetime", name: "Lifetime ⚡", price: "59€", desc: "Einmalzahlung — für immer", mo: " einmalig" }].map(p => (
           <div key={p.id} style={{ flex: "1 1 160px", padding: 16, borderRadius: 12, border: profile.plan === p.id ? `2px solid ${brand.primary}` : `1.5px solid ${brand.borderLight}`, background: profile.plan === p.id ? brand.bgMuted : "#fff", position: "relative" }}>
             {profile.plan === p.id && <div style={{ position: "absolute", top: -10, right: 12, padding: "2px 10px", borderRadius: 10, background: brand.primary, color: "#fff", fontSize: 10, fontWeight: 700 }}>Aktiv</div>}
             <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>{p.name}</div>
             <div style={{ fontSize: 20, fontWeight: 800, color: brand.primary }}>{p.price}<span style={{ fontSize: 12, fontWeight: 400, color: brand.textMuted }}>{p.mo}</span></div>
             <div style={{ fontSize: 12, color: brand.textMuted, marginTop: 4, marginBottom: 12 }}>{p.desc}</div>
             {profile.plan !== p.id && p.id !== "free" && (
-              <Btn size="sm" variant={p.id === "pro" ? "accent" : "primary"} onClick={async () => {
+              <Btn size="sm" variant={p.id === "lifetime" ? "accent" : p.id === "pro" ? "accent" : "primary"} onClick={async () => {
+                // Lifetime → Digistore24
+                if (p.id === "lifetime") {
+                  const pid = DIGISTORE.lifetime;
+                  if (pid.startsWith("PRODUCT_ID_")) { alert("Digistore24 Produkt-ID noch nicht konfiguriert."); return; }
+                  window.location.href = `https://www.digistore24.com/product/${pid}?email=${encodeURIComponent(profile.email)}`;
+                  return;
+                }
+                // Plus/Pro → Mollie
                 try {
                   const resp = await fetch("/api/mollie/checkout", {
                     method: "POST", headers: { "Content-Type": "application/json" },
@@ -1655,7 +1690,6 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
                   });
                   const data = await resp.json();
                   if (data.checkoutUrl) {
-                    // Save Mollie customer ID before redirect
                     updateProfile("mollieCustomerId", data.customerId);
                     updateProfile("pendingPlan", p.id);
                     window.location.href = data.checkoutUrl;
@@ -1664,7 +1698,7 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
                   }
                 } catch (e) { alert("Verbindungsfehler. Bitte versuche es erneut."); }
               }} style={{ width: "100%" }}>
-                <CreditCard size={14} /> {profile.plan === "free" ? "Upgraden" : "Wechseln"}
+                <CreditCard size={14} /> {p.id === "lifetime" ? "Kaufen" : profile.plan === "free" ? "Upgraden" : "Wechseln"}
               </Btn>
             )}
             {profile.plan === p.id && p.id === "free" && <span style={{ fontSize: 12, color: brand.textMuted }}>Aktueller Tarif</span>}
@@ -1929,6 +1963,12 @@ function AdminPage() {
     try {
       // Find all user emails from localStorage keys
       const userEmails = new Set();
+      // Source 1: User registry (all registered users)
+      try {
+        const registry = JSON.parse(localStorage.getItem("kb_user_registry") || "[]");
+        registry.forEach(u => { if (u.email) userEmails.add(u.email); });
+      } catch {}
+      // Source 2: localStorage keys (users who have data)
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
         const m = key?.match(/^kb_(.+?)_(profile|projects|usage)$/);
@@ -2072,6 +2112,326 @@ function AdminPage() {
 }
 
 // ═══════════════════════════════════════════
+// OFFER / VERKAUFSSEITE
+// ═══════════════════════════════════════════
+function OfferPage({ setPage }) {
+  const [checkout, setCheckout] = useState(null);
+
+  const startCheckout = (plan) => {
+    // Digistore24 Checkout URL
+    const productId = DIGISTORE[plan];
+    if (productId && productId.startsWith("PRODUCT_ID_")) {
+      alert("Digistore24 Produkt-ID noch nicht konfiguriert. Bitte in App.jsx die DIGISTORE Konstanten setzen.");
+      return;
+    }
+    const email = "";
+    window.location.href = `https://www.digistore24.com/product/${productId}?email=${encodeURIComponent(email)}`;
+  };
+
+  return <div style={{ background: brand.bg }}>
+    {/* Hero */}
+    <section style={{ padding: "60px 20px 40px", textAlign: "center", background: `linear-gradient(180deg, ${brand.bgMuted} 0%, ${brand.bg} 100%)` }}>
+      <div style={{ maxWidth: 900, margin: "0 auto" }}>
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 14px", borderRadius: 20, background: `${brand.accent}15`, marginBottom: 20 }}>
+          <Zap size={14} style={{ color: brand.accent }} />
+          <span style={{ fontSize: 13, fontWeight: 700, color: brand.accentHover }}>ZEITLICH BEGRENZTES ANGEBOT</span>
+        </div>
+        <h1 style={{ fontSize: "clamp(32px, 6vw, 52px)", fontWeight: 900, lineHeight: 1.1, color: brand.text, margin: "0 0 20px" }}>
+          Nie wieder <span style={{ color: brand.accent }}>Behörden-Stress.</span><br/>
+          Einmal zahlen. <span style={{ color: brand.primary }}>Für immer nutzen.</span>
+        </h1>
+        <p style={{ fontSize: 20, color: brand.textMuted, lineHeight: 1.6, margin: "0 auto 32px", maxWidth: 700 }}>
+          Schluss mit unverständlichem Amtsdeutsch. Foto machen, KI erklärt's. Mit dem <strong style={{ color: brand.text }}>KlarBrief24 Lifetime-Zugang</strong> bekommst du unbegrenzte Analysen — ein Leben lang, ohne monatliche Kosten.
+        </p>
+        <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap", marginBottom: 16 }}>
+          <Btn size="lg" variant="accent" onClick={() => startCheckout("lifetime")}><Zap size={18} /> Jetzt für 59€ sichern</Btn>
+          <Btn size="lg" variant="outline" onClick={() => { document.getElementById("offer-details")?.scrollIntoView({ behavior: "smooth" }); }}>Mehr erfahren ↓</Btn>
+        </div>
+        <div style={{ display: "flex", gap: 20, justifyContent: "center", flexWrap: "wrap", fontSize: 13, color: brand.textMuted }}>
+          <span>✓ 14 Tage Geld-zurück-Garantie</span>
+          <span>✓ Sicher über Digistore24</span>
+          <span>✓ Sofortiger Zugang</span>
+        </div>
+      </div>
+    </section>
+
+    {/* Pain Points */}
+    <section style={{ padding: "60px 20px", background: "#fff" }}>
+      <div style={{ maxWidth: 900, margin: "0 auto" }}>
+        <h2 style={{ fontSize: 32, fontWeight: 800, color: brand.text, textAlign: "center", margin: "0 0 40px" }}>Kennst du das?</h2>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 20 }}>
+          {[
+            { icon: AlertTriangle, t: "Briefe verstehst du nicht", d: "Behördendeutsch wirkt wie eine Fremdsprache. Du liest drei Mal und bist trotzdem verunsichert." },
+            { icon: Clock, t: "Fristen verpasst du", d: "Wichtige Deadlines gehen unter — und plötzlich kommen Mahngebühren, Zinsen oder Bußgelder." },
+            { icon: CreditCard, t: "Anwälte sind zu teuer", d: "Für jede kleine Frage 200€ zahlen? Nicht realistisch. Du bleibst auf dem Problem sitzen." },
+          ].map((p, i) => (
+            <div key={i} style={{ padding: 24, borderRadius: 12, background: brand.bg, border: `1px solid ${brand.borderLight}` }}>
+              <div style={{ width: 48, height: 48, borderRadius: 12, background: `${brand.danger}10`, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}><p.icon size={24} style={{ color: brand.danger }} /></div>
+              <h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, margin: "0 0 8px" }}>{p.t}</h3>
+              <p style={{ fontSize: 14, color: brand.textMuted, lineHeight: 1.6, margin: 0 }}>{p.d}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    {/* Solution */}
+    <section id="offer-details" style={{ padding: "80px 20px", background: brand.bgMuted }}>
+      <div style={{ maxWidth: 1000, margin: "0 auto" }}>
+        <div style={{ textAlign: "center", marginBottom: 48 }}>
+          <h2 style={{ fontSize: 36, fontWeight: 800, color: brand.text, margin: "0 0 12px" }}>KlarBrief24 macht's einfach.</h2>
+          <p style={{ fontSize: 18, color: brand.textMuted, maxWidth: 600, margin: "0 auto" }}>Foto machen. KI arbeitet. Klarheit bekommen. In 30 Sekunden.</p>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 24 }}>
+          {[
+            { n: "1", t: "Brief fotografieren", d: "Mit dem Handy oder per PDF-Upload — egal ob Steuerbescheid, Rechnung oder Mietvertrag." },
+            { n: "2", t: "KI analysiert", d: "In Sekunden bekommst du: Übersetzung in einfaches Deutsch, Ampel-Bewertung und To-Do-Liste." },
+            { n: "3", t: "Antwortbrief erstellen", d: "Professionelle DIN-5008-Antwort mit Rechtsverweisen und Aktenzeichen — druckfertig." },
+          ].map((s, i) => (
+            <div key={i} style={{ padding: 28, borderRadius: 16, background: "#fff", border: `1px solid ${brand.borderLight}`, textAlign: "center" }}>
+              <div style={{ width: 56, height: 56, borderRadius: "50%", background: `linear-gradient(135deg, ${brand.primary}, ${brand.primaryLight})`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", color: "#fff", fontSize: 22, fontWeight: 800 }}>{s.n}</div>
+              <h3 style={{ fontSize: 20, fontWeight: 700, color: brand.text, margin: "0 0 10px" }}>{s.t}</h3>
+              <p style={{ fontSize: 15, color: brand.textMuted, lineHeight: 1.6, margin: 0 }}>{s.d}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    {/* Offer Box */}
+    <section style={{ padding: "80px 20px", background: "#fff" }}>
+      <div style={{ maxWidth: 600, margin: "0 auto" }}>
+        <div style={{ borderRadius: 24, overflow: "hidden", border: `3px solid ${brand.accent}`, boxShadow: `0 20px 60px ${brand.accent}25` }}>
+          <div style={{ padding: "16px 24px", background: brand.accent, color: "#fff", textAlign: "center", fontSize: 14, fontWeight: 800, letterSpacing: "0.05em", textTransform: "uppercase" }}>
+            ⚡ Lifetime-Deal — nur jetzt
+          </div>
+          <div style={{ padding: "40px 32px", background: "#fff", textAlign: "center" }}>
+            <h3 style={{ fontSize: 28, fontWeight: 800, color: brand.text, margin: "0 0 8px" }}>KlarBrief24 Lifetime</h3>
+            <p style={{ fontSize: 15, color: brand.textMuted, margin: "0 0 24px" }}>Einmalzahlung — keine monatlichen Kosten</p>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "center", gap: 8, marginBottom: 8 }}>
+              <span style={{ fontSize: 20, color: brand.textMuted, textDecoration: "line-through" }}>179€</span>
+              <span style={{ fontSize: 64, fontWeight: 900, color: brand.primary, lineHeight: 1 }}>59€</span>
+            </div>
+            <p style={{ fontSize: 14, color: brand.success, fontWeight: 700, marginBottom: 32 }}>Du sparst 120€ gegenüber Jahresabo</p>
+
+            <div style={{ textAlign: "left", marginBottom: 32, display: "flex", flexDirection: "column", gap: 10 }}>
+              {[
+                "Unbegrenzte Brief-Analysen (für immer)",
+                "Foto- und PDF-Upload mit KI-Texterkennung",
+                "Übersetzung in einfaches Deutsch",
+                "Ampel-Bewertung und automatische Fristen",
+                "Vollständiges Projektarchiv",
+                "Aktenzeichen-Extraktion",
+                "2-Faktor-Authentifizierung",
+                "Alle zukünftigen Updates inklusive",
+              ].map((f, i) => (
+                <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                  <CheckCircle size={18} style={{ color: brand.success, flexShrink: 0, marginTop: 2 }} />
+                  <span style={{ fontSize: 15, color: brand.text }}>{f}</span>
+                </div>
+              ))}
+            </div>
+
+            <Btn size="lg" variant="accent" onClick={() => startCheckout("lifetime")} style={{ width: "100%", padding: "18px 24px", fontSize: 18 }}>
+              <Zap size={20} /> Jetzt für 59€ sichern
+            </Btn>
+
+            <div style={{ marginTop: 20, padding: 14, borderRadius: 10, background: brand.bgMuted }}>
+              <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap", fontSize: 12, color: brand.textMuted, fontWeight: 600 }}>
+                <span>🔒 SSL-verschlüsselt</span>
+                <span>💳 Alle Zahlungsarten</span>
+                <span>⚡ Sofort-Zugang</span>
+              </div>
+            </div>
+            <p style={{ fontSize: 12, color: brand.textMuted, marginTop: 12 }}>Zahlungsabwicklung über Digistore24 — unser zertifizierter Reseller</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    {/* Guarantee */}
+    <section style={{ padding: "60px 20px", background: brand.bgMuted, textAlign: "center" }}>
+      <div style={{ maxWidth: 700, margin: "0 auto" }}>
+        <div style={{ width: 80, height: 80, borderRadius: "50%", background: "#fff", border: `3px solid ${brand.success}`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px" }}><Shield size={36} style={{ color: brand.success }} /></div>
+        <h2 style={{ fontSize: 28, fontWeight: 800, color: brand.text, margin: "0 0 12px" }}>14 Tage Geld-zurück-Garantie</h2>
+        <p style={{ fontSize: 16, color: brand.textMuted, lineHeight: 1.7, margin: 0 }}>
+          Du gehst kein Risiko ein. Wenn KlarBrief24 nicht deine Erwartungen erfüllt, bekommst du innerhalb von 14 Tagen <strong>100% deines Geldes zurück</strong> — ohne Rückfragen.
+        </p>
+      </div>
+    </section>
+
+    {/* Final CTA */}
+    <section style={{ padding: "80px 20px", background: "#fff", textAlign: "center" }}>
+      <h2 style={{ fontSize: 36, fontWeight: 800, color: brand.text, margin: "0 0 16px" }}>Bereit, Behördenbriefe endlich zu verstehen?</h2>
+      <p style={{ fontSize: 18, color: brand.textMuted, margin: "0 auto 32px", maxWidth: 600 }}>Einmal 59€ zahlen. Für immer nutzen. Alle Updates inklusive.</p>
+      <Btn size="lg" variant="accent" onClick={() => startCheckout("lifetime")} style={{ padding: "18px 36px", fontSize: 18 }}><Zap size={20} /> Jetzt Lifetime-Zugang sichern</Btn>
+      <p style={{ fontSize: 13, color: brand.textMuted, marginTop: 20 }}>
+        Schon Kunde? <span onClick={() => setPage("login")} style={{ color: brand.primary, cursor: "pointer", fontWeight: 600 }}>Hier anmelden</span>
+      </p>
+    </section>
+  </div>;
+}
+
+// ═══════════════════════════════════════════
+// THANK YOU PAGE
+// ═══════════════════════════════════════════
+function ThankYouPage({ setPage }) {
+  useEffect(() => {
+    // Parse Digistore24 return params if present
+    const params = new URLSearchParams(window.location.search);
+    const orderId = params.get("order_id") || params.get("receipt");
+    if (orderId) {
+      console.log("Digistore24 Bestellung:", orderId);
+    }
+  }, []);
+
+  return <div style={{ minHeight: "80vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "60px 20px", background: `linear-gradient(180deg, ${brand.bgMuted} 0%, ${brand.bg} 100%)` }}>
+    <div style={{ maxWidth: 640, width: "100%", textAlign: "center" }}>
+      <div style={{ width: 100, height: 100, borderRadius: "50%", background: `${brand.success}15`, border: `3px solid ${brand.success}`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 32px", animation: "fadeIn 0.6s ease" }}>
+        <CheckCircle size={52} style={{ color: brand.success }} />
+      </div>
+      <h1 style={{ fontSize: "clamp(32px, 5vw, 44px)", fontWeight: 900, color: brand.text, margin: "0 0 16px" }}>Vielen Dank für deinen Kauf! 🎉</h1>
+      <p style={{ fontSize: 18, color: brand.textMuted, lineHeight: 1.7, margin: "0 0 32px" }}>
+        Deine Bestellung wurde erfolgreich abgeschlossen. Du hast jetzt <strong style={{ color: brand.primary }}>unbegrenzten Lifetime-Zugang</strong> zu KlarBrief24.
+      </p>
+
+      <Card style={{ padding: 32, marginBottom: 32, textAlign: "left" }}>
+        <h3 style={{ fontSize: 20, fontWeight: 700, color: brand.text, margin: "0 0 20px" }}>So geht's weiter:</h3>
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          {[
+            { n: "1", t: "E-Mail prüfen", d: "Du erhältst eine Bestätigungs-E-Mail von Digistore24 mit deinem Rechnungsbeleg." },
+            { n: "2", t: "Account erstellen", d: "Registriere dich mit der E-Mail-Adresse, die du beim Kauf verwendet hast." },
+            { n: "3", t: "Losschreiben", d: "Fotografiere deinen ersten Brief — die KI übersetzt ihn in Sekunden." },
+          ].map(s => (
+            <div key={s.n} style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+              <div style={{ width: 36, height: 36, borderRadius: "50%", background: brand.primary, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, flexShrink: 0 }}>{s.n}</div>
+              <div><h4 style={{ fontSize: 16, fontWeight: 700, color: brand.text, margin: "0 0 4px" }}>{s.t}</h4><p style={{ fontSize: 14, color: brand.textMuted, lineHeight: 1.6, margin: 0 }}>{s.d}</p></div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap", marginBottom: 24 }}>
+        <Btn size="lg" onClick={() => setPage("register")}><UserPlus size={18} /> Jetzt Account erstellen</Btn>
+        <Btn size="lg" variant="outline" onClick={() => setPage("home")}>Zur Startseite</Btn>
+      </div>
+
+      <p style={{ fontSize: 13, color: brand.textMuted }}>
+        Fragen oder Probleme? Schreib uns an <a href="mailto:info@csv-support.de" style={{ color: brand.primary, fontWeight: 600 }}>info@csv-support.de</a>
+      </p>
+    </div>
+  </div>;
+}
+
+// ═══════════════════════════════════════════
+// PARTNER / AFFILIATE PAGE
+// ═══════════════════════════════════════════
+function PartnerPage({ setPage }) {
+  return <div style={{ background: brand.bg }}>
+    {/* Hero */}
+    <section style={{ padding: "80px 20px 60px", textAlign: "center", background: `linear-gradient(180deg, ${brand.bgMuted} 0%, ${brand.bg} 100%)` }}>
+      <div style={{ maxWidth: 800, margin: "0 auto" }}>
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 14px", borderRadius: 20, background: `${brand.accent}15`, marginBottom: 20 }}>
+          <TrendingUp size={14} style={{ color: brand.accent }} />
+          <span style={{ fontSize: 13, fontWeight: 700, color: brand.accentHover }}>PARTNERPROGRAMM</span>
+        </div>
+        <h1 style={{ fontSize: "clamp(32px, 5vw, 48px)", fontWeight: 900, color: brand.text, margin: "0 0 20px", lineHeight: 1.15 }}>
+          Verdiene Geld mit <span style={{ color: brand.primary }}>KlarBrief24</span>
+        </h1>
+        <p style={{ fontSize: 20, color: brand.textMuted, lineHeight: 1.6, margin: "0 auto 32px", maxWidth: 600 }}>
+          Empfiehl KlarBrief24 weiter und verdiene <strong style={{ color: brand.accent }}>bis zu 50% Provision</strong> — für jeden Verkauf, den du vermittelst.
+        </p>
+        <Btn size="lg" variant="accent" onClick={() => window.open(DIGISTORE.partnerProgramUrl, "_blank")}>
+          <ExternalLink size={18} /> Jetzt Partner werden
+        </Btn>
+      </div>
+    </section>
+
+    {/* Commission Box */}
+    <section style={{ padding: "60px 20px", background: "#fff" }}>
+      <div style={{ maxWidth: 900, margin: "0 auto" }}>
+        <h2 style={{ fontSize: 32, fontWeight: 800, color: brand.text, textAlign: "center", margin: "0 0 12px" }}>Deine Vorteile als Partner</h2>
+        <p style={{ fontSize: 16, color: brand.textMuted, textAlign: "center", margin: "0 0 48px" }}>Abgewickelt über Digistore24 — Deutschlands führende Plattform für digitale Produkte</p>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 24 }}>
+          {[
+            { icon: TrendingUp, t: "Bis zu 50% Provision", d: "Pro verkauftem Lifetime-Zugang erhältst du bis zu 29,50€ — direkt auf dein Konto." },
+            { icon: Clock, t: "Monatliche Auszahlung", d: "Zuverlässige Zahlungen von Digistore24 — pünktlich und nachverfolgbar." },
+            { icon: BarChart3, t: "Echtzeit-Statistiken", d: "Sieh sofort, wie viele Klicks und Verkäufe du generiert hast." },
+            { icon: Users, t: "Marketing-Material", d: "Banner, Texte und Landingpages — alles fertig für dich bereitgestellt." },
+            { icon: Shield, t: "Lange Cookie-Laufzeit", d: "60 Tage Tracking — auch wenn der Kunde später kauft, bekommst du die Provision." },
+            { icon: Award, t: "2nd-Tier verfügbar", d: "Wirb weitere Partner und verdiene zusätzlich an deren Verkäufen." },
+          ].map((b, i) => (
+            <div key={i} style={{ padding: 24, borderRadius: 12, background: brand.bgMuted, border: `1px solid ${brand.borderLight}` }}>
+              <div style={{ width: 48, height: 48, borderRadius: 12, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}><b.icon size={24} style={{ color: brand.primary }} /></div>
+              <h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, margin: "0 0 8px" }}>{b.t}</h3>
+              <p style={{ fontSize: 14, color: brand.textMuted, lineHeight: 1.6, margin: 0 }}>{b.d}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    {/* How it works */}
+    <section style={{ padding: "80px 20px", background: brand.bgMuted }}>
+      <div style={{ maxWidth: 900, margin: "0 auto" }}>
+        <h2 style={{ fontSize: 32, fontWeight: 800, color: brand.text, textAlign: "center", margin: "0 0 48px" }}>So funktioniert's</h2>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 24 }}>
+          {[
+            { n: "1", t: "Bei Digistore24 registrieren", d: "Kostenlose Anmeldung als Affiliate-Partner." },
+            { n: "2", t: "Partner-Link erhalten", d: "Dein persönlicher Link zum Teilen." },
+            { n: "3", t: "Link teilen", d: "Auf Social Media, Blog, YouTube, E-Mail-Listen." },
+            { n: "4", t: "Provision kassieren", d: "Monatliche Auszahlung auf dein Konto." },
+          ].map(s => (
+            <div key={s.n} style={{ padding: 24, borderRadius: 16, background: "#fff", textAlign: "center" }}>
+              <div style={{ width: 48, height: 48, borderRadius: "50%", background: `linear-gradient(135deg, ${brand.primary}, ${brand.accent})`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 12px", color: "#fff", fontSize: 20, fontWeight: 800 }}>{s.n}</div>
+              <h3 style={{ fontSize: 16, fontWeight: 700, color: brand.text, margin: "0 0 6px" }}>{s.t}</h3>
+              <p style={{ fontSize: 13, color: brand.textMuted, lineHeight: 1.5, margin: 0 }}>{s.d}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    {/* Target Audience */}
+    <section style={{ padding: "80px 20px", background: "#fff" }}>
+      <div style={{ maxWidth: 900, margin: "0 auto" }}>
+        <h2 style={{ fontSize: 32, fontWeight: 800, color: brand.text, textAlign: "center", margin: "0 0 48px" }}>Für wen lohnt sich das Partnerprogramm?</h2>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 20 }}>
+          {[
+            { t: "Finanz-Blogger", d: "Deine Leser suchen Lösungen für Steuer- und Bescheidprobleme." },
+            { t: "Ratgeber-YouTuber", d: "Zeige KlarBrief24 in deinen Videos — das Tool verkauft sich praktisch selbst." },
+            { t: "Steuerberater & Rechtsanwälte", d: "Empfiehl deinen Mandanten ein hilfreiches Zusatz-Tool." },
+            { t: "Soziale Einrichtungen", d: "Verbände und Beratungsstellen profitieren doppelt." },
+            { t: "Content Creator", d: "Newsletter, TikTok, Instagram — überall passt KlarBrief24 rein." },
+            { t: "Affiliate-Profis", d: "Lifetime-Deals mit niedrigem Preispunkt konvertieren überdurchschnittlich gut." },
+          ].map((a, i) => (
+            <div key={i} style={{ padding: 20, borderRadius: 12, border: `1px solid ${brand.borderLight}` }}>
+              <h3 style={{ fontSize: 16, fontWeight: 700, color: brand.text, margin: "0 0 6px" }}>{a.t}</h3>
+              <p style={{ fontSize: 14, color: brand.textMuted, lineHeight: 1.6, margin: 0 }}>{a.d}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    {/* Final CTA */}
+    <section style={{ padding: "80px 20px", background: `linear-gradient(135deg, ${brand.primary}, ${brand.primaryDark})`, textAlign: "center" }}>
+      <div style={{ maxWidth: 700, margin: "0 auto" }}>
+        <h2 style={{ fontSize: 36, fontWeight: 800, color: "#fff", margin: "0 0 16px" }}>Bereit durchzustarten?</h2>
+        <p style={{ fontSize: 18, color: "rgba(255,255,255,0.85)", margin: "0 0 32px" }}>Registriere dich jetzt kostenlos bei Digistore24 und erhalte sofort deinen Partner-Link.</p>
+        <Btn size="lg" variant="accent" onClick={() => window.open(DIGISTORE.partnerProgramUrl, "_blank")}>
+          <ExternalLink size={18} /> Jetzt kostenlos registrieren
+        </Btn>
+        <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", marginTop: 20 }}>
+          Bei Fragen: <a href="mailto:partner@csv-support.de" style={{ color: "#fff" }}>partner@csv-support.de</a>
+        </p>
+      </div>
+    </section>
+  </div>;
+}
+
+// ═══════════════════════════════════════════
 // LEGAL PAGES
 // ═══════════════════════════════════════════
 function LegalPage({ page }) {
@@ -2162,6 +2522,9 @@ export default function App() {
       case "register": return <AuthPage mode="register" setPage={setPage} onLogin={setUser} />;
       case "dashboard": return isLoggedIn ? <DashboardPage user={user} setUser={setUser} setPage={setPage} /> : <AuthPage mode="login" setPage={setPage} onLogin={setUser} />;
       case "admin": return isLoggedIn && isAdmin ? <AdminPage /> : <AuthPage mode="login" setPage={setPage} onLogin={setUser} />;
+      case "angebot": return <OfferPage setPage={setPage} />;
+      case "danke": return <ThankYouPage setPage={setPage} />;
+      case "partner": return <PartnerPage setPage={setPage} />;
       case "impressum": case "datenschutz": case "agb": case "widerruf": return <LegalPage page={page} />;
       default: return <HomePage setPage={setPage} />;
     }

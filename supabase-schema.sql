@@ -23,19 +23,9 @@ create table if not exists profiles (
   subscription_active boolean default false,
   next_payment_date text,
   is_admin boolean default false,
-  discount_percent int default 0,
-  custom_limit int,
-  admin_notes text,
-  granted_until text,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
-
--- Add columns if upgrading existing schema (safe to run multiple times)
-alter table profiles add column if not exists discount_percent int default 0;
-alter table profiles add column if not exists custom_limit int;
-alter table profiles add column if not exists admin_notes text;
-alter table profiles add column if not exists granted_until text;
 
 -- ─── PROJECTS TABLE ────────────────────────────────
 create table if not exists projects (
@@ -74,16 +64,6 @@ alter table profiles enable row level security;
 alter table projects enable row level security;
 alter table usage_tracking enable row level security;
 
--- ─── HELPER FUNCTION (avoids infinite recursion in admin policies) ──
-create or replace function is_admin_user()
-returns boolean
-language sql
-security definer
-stable
-as $$
-  select coalesce((select is_admin from profiles where id = auth.uid()), false);
-$$;
-
 -- PROFILES policies
 drop policy if exists "Users can view own profile" on profiles;
 create policy "Users can view own profile"
@@ -103,22 +83,12 @@ create policy "Users can insert own profile"
 drop policy if exists "Admins can view all profiles" on profiles;
 create policy "Admins can view all profiles"
   on profiles for select
-  using (is_admin_user());
+  using (exists (select 1 from profiles where id = auth.uid() and is_admin = true));
 
 drop policy if exists "Admins can delete profiles" on profiles;
 create policy "Admins can delete profiles"
   on profiles for delete
-  using (is_admin_user());
-
-drop policy if exists "Admins can update all profiles" on profiles;
-create policy "Admins can update all profiles"
-  on profiles for update
-  using (is_admin_user());
-
-drop policy if exists "Admins can update all profiles" on profiles;
-create policy "Admins can update all profiles"
-  on profiles for update
-  using (is_admin_user());
+  using (exists (select 1 from profiles where id = auth.uid() and is_admin = true));
 
 -- PROJECTS policies
 drop policy if exists "Users can view own projects" on projects;
@@ -144,12 +114,12 @@ create policy "Users can delete own projects"
 drop policy if exists "Admins can view all projects" on projects;
 create policy "Admins can view all projects"
   on projects for select
-  using (is_admin_user());
+  using (exists (select 1 from profiles where id = auth.uid() and is_admin = true));
 
 drop policy if exists "Admins can delete all projects" on projects;
 create policy "Admins can delete all projects"
   on projects for delete
-  using (is_admin_user());
+  using (exists (select 1 from profiles where id = auth.uid() and is_admin = true));
 
 -- USAGE policies
 drop policy if exists "Users can view own usage" on usage_tracking;
@@ -165,12 +135,12 @@ create policy "Users can manage own usage"
 drop policy if exists "Admins can view all usage" on usage_tracking;
 create policy "Admins can view all usage"
   on usage_tracking for select
-  using (is_admin_user());
+  using (exists (select 1 from profiles where id = auth.uid() and is_admin = true));
 
 drop policy if exists "Admins can delete all usage" on usage_tracking;
 create policy "Admins can delete all usage"
   on usage_tracking for delete
-  using (is_admin_user());
+  using (exists (select 1 from profiles where id = auth.uid() and is_admin = true));
 
 -- ─── AUTO-CREATE PROFILE ON SIGNUP ─────────────────
 create or replace function handle_new_user()

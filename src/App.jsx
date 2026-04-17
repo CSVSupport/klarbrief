@@ -1399,10 +1399,6 @@ function DashboardPage({ user, setUser, setPage }) {
   const [fileData, setFileData] = useState(null);
   const [editorIntent, setEditorIntent] = useState(""); const [editorTone, setEditorTone] = useState("sachlich"); const [editorResult, setEditorResult] = useState(""); const [editorLoading, setEditorLoading] = useState(false);
   const [editorAktenzeichen, setEditorAktenzeichen] = useState("");
-  const [editMode, setEditMode] = useState(false);
-  const [refineInstruction, setRefineInstruction] = useState("");
-  const [refineLoading, setRefineLoading] = useState(false);
-  const [letterSaved, setLetterSaved] = useState(false);
   const [showDocument, setShowDocument] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -1423,22 +1419,6 @@ function DashboardPage({ user, setUser, setPage }) {
           getProjects(user.id),
         ]);
         if (!mounted) return;
-
-        // Critical: If profile doesn't exist, the trigger failed.
-        // Try to create it manually so projects can be saved.
-        if (!profileRes.data && !profileRes.error?.code === "PGRST116") {
-          console.warn("Profile missing — attempting manual creation");
-          try {
-            await supabase.from('profiles').insert([{
-              id: user.id,
-              email: user.email,
-              is_admin: user.email === "info@csv-support.de",
-            }]);
-            const retry = await getProfile(user.id);
-            if (retry.data) profileRes.data = retry.data;
-          } catch (e) { console.error("Manual profile creation failed:", e); }
-        }
-
         if (profileRes.data) {
           setProfile({
             vorname: profileRes.data.vorname || user?.name?.split(" ")[0] || "",
@@ -1452,12 +1432,6 @@ function DashboardPage({ user, setUser, setPage }) {
             mollieCustomerId: profileRes.data.mollie_customer_id || null,
             mollieSubscription: profileRes.data.subscription_active ? { active: true, subscriptionId: profileRes.data.mollie_subscription_id, nextPaymentDate: profileRes.data.next_payment_date } : null,
           });
-        } else {
-          console.error("⚠️ KEIN PROFIL GEFUNDEN für User", user.id, "— Speicherung wird fehlschlagen!");
-        }
-        if (projectsRes.error) {
-          console.error("⚠️ Projekte konnten nicht geladen werden:", projectsRes.error);
-          alert("Projekte konnten nicht aus der Datenbank geladen werden.\n\nFehler: " + (projectsRes.error.message || JSON.stringify(projectsRes.error)) + "\n\nBitte prüfe die Supabase-Verbindung.");
         }
         if (projectsRes.data) {
           setProjects(projectsRes.data.map(p => ({
@@ -1466,10 +1440,7 @@ function DashboardPage({ user, setUser, setPage }) {
             letters: p.letters || [],
           })));
         }
-      } catch (e) {
-        console.error("Load error:", e);
-        alert("Fehler beim Laden der Daten: " + e.message);
-      }
+      } catch (e) { console.error("Load error:", e); }
       setLoading(false);
     })();
     return () => { mounted = false; };
@@ -1596,64 +1567,10 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
       });
       const data = await resp.json();
       setEditorResult(data.content?.[0]?.text || "Brief konnte nicht generiert werden.");
-      setLetterSaved(false);
     } catch {
       setEditorResult(`${senderBlock}\n\n${empfaenger}\n\n${datum}\n${akz ? "Ihr Zeichen: " + akz + "\n" : ""}\n**Betreff: ${editorIntent}**\n\nSehr geehrte Damen und Herren,\n\nhiermit möchte ich ${editorIntent.toLowerCase()}.\n\nIch bitte um Bearbeitung innerhalb von 14 Tagen.\n\nMit freundlichen Grüßen\n\n${fullName}`);
-      setLetterSaved(false);
     }
     setEditorLoading(false);
-  };
-
-  const handleRefineLetter = async () => {
-    if (!refineInstruction.trim() || !editorResult) return;
-    setRefineLoading(true);
-    const sysPrompt = `Du bist KlarBrief24, ein professioneller Briefgenerator. Du bekommst einen bestehenden Brief und eine Änderungsanweisung. Gib den überarbeiteten Brief im gleichen DIN-5008-Format zurück. NUR den fertigen Brieftext, kein Markdown außer **Betreff:**, keine Erklärungen.`;
-    try {
-      const resp = await fetch("/api/anthropic", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: 1500, system: sysPrompt,
-          messages: [{ role: "user", content: `Hier ist der bestehende Brief:\n\n${editorResult}\n\n---\n\nÄnderungswunsch: ${refineInstruction}\n\nGib den überarbeiteten Brief zurück.` }] })
-      });
-      const data = await resp.json();
-      const newText = data.content?.[0]?.text;
-      if (newText) {
-        setEditorResult(newText);
-        setRefineInstruction("");
-        setLetterSaved(false);
-      }
-    } catch (e) { alert("Fehler bei der Überarbeitung. Bitte versuche es erneut."); }
-    setRefineLoading(false);
-  };
-
-  const handleSaveLetterToProject = async () => {
-    if (!editorResult || !activeProject) return;
-    // Extract betreff from letter (looks for "**Betreff:" or "Betreff:")
-    const betreffMatch = editorResult.match(/\*?\*?Betreff:\*?\*?\s*([^\n]+)/i);
-    const betreff = betreffMatch ? betreffMatch[1].replace(/\*+/g, "").trim() : `Antwort an ${activeProject.behoerde}`;
-
-    const newLetter = {
-      id: Date.now(),
-      date: new Date().toLocaleDateString("de-DE"),
-      direction: "ausgehend",
-      type: "Antwortschreiben",
-      summary: editorResult.substring(0, 200) + (editorResult.length > 200 ? "..." : ""),
-      betreff,
-      letterText: editorResult,
-      analyzed: false,
-      document: null,
-      originalText: null,
-    };
-
-    const updatedLetters = [...activeProject.letters, newLetter];
-    const updatedProject = { ...activeProject, letters: updatedLetters };
-    setProjects(projects.map(p => p.id === activeProject.id ? updatedProject : p));
-    setActiveProject(updatedProject);
-
-    if (user?.id) {
-      // Strip base64 from existing letters for DB
-      const dbLetters = updatedLetters.map(l => ({ ...l, document: l.document ? { mediaType: l.document.mediaType, isImage: l.document.isImage, isPdf: l.document.isPdf, fileName: l.document.fileName } : null }));
-      try { await dbUpdateProject(activeProject.id, { letters: dbLetters }); } catch (e) { console.warn("Save letter failed:", e); }
-    }
-    setLetterSaved(true);
   };
 
   const [savedToProject, setSavedToProject] = useState(null);
@@ -1700,7 +1617,6 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
   const handleAnalyze = async () => {
     if (!analyzeText.trim() && !fileData) return;
     if (!canAnalyze) { setShowUpgrade(true); return; }
-    if (!user?.id) { alert("Bitte melde dich an um Briefe zu speichern."); return; }
     setAnalyzing(true); setSavedToProject(null);
 
     let result;
@@ -1708,13 +1624,12 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
       result = await analyzeWithAI(analyzeText, fileData);
     } catch (e) {
       console.error("Analysis failed:", e);
-      alert("Analyse fehlgeschlagen: " + e.message);
-      setAnalyzing(false);
-      return;
+      result = null;
     }
     setAnalyzeResult(result);
 
     if (result) {
+      // Increment usage (don't let failure stop project creation)
       try { await incrementUsage(); } catch (e) { console.warn("Usage tracking failed:", e); }
 
       const nl = {
@@ -1730,29 +1645,20 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
         if (activeProject) {
           const stateFields = { letters: [...activeProject.letters, nl], ampel: result.ampel, frist: result.frist || activeProject.frist, behoerde: result.behoerde || activeProject.behoerde, aktenzeichen: result.aktenzeichen || activeProject.aktenzeichen || "", referenzen: [...(activeProject.referenzen || []), ...(result.referenzen || [])].filter((v, i, a) => a.indexOf(v) === i) };
           const dbFields = { ...stateFields, letters: [...(activeProject.letters || []).map(l => ({ ...l, document: l.document ? { mediaType: l.document.mediaType, isImage: l.document.isImage, isPdf: l.document.isPdf, fileName: l.document.fileName } : null })), nlForDb] };
-
-          const { error } = await dbUpdateProject(activeProject.id, dbFields);
-          if (error) {
-            console.error("DB save failed:", error);
-            alert("⚠️ Speicherung fehlgeschlagen!\n\nFehler: " + (error.message || JSON.stringify(error)) + "\n\nDer Brief ist nur lokal gespeichert und geht beim Reload verloren!");
-          }
           setProjects(projects.map(p => p.id === activeProject.id ? { ...p, ...stateFields } : p));
           setActiveProject(prev => ({ ...prev, ...stateFields }));
           setSavedToProject(activeProject);
+          if (user?.id) { try { await dbUpdateProject(activeProject.id, dbFields); } catch (e) { console.warn("DB update failed:", e); } }
         } else {
           const match = findMatchingProject(result);
           if (match) {
             const stateFields = { letters: [...match.letters, nl], ampel: result.ampel, frist: result.frist || match.frist, behoerde: result.behoerde || match.behoerde, aktenzeichen: result.aktenzeichen || match.aktenzeichen || "", referenzen: [...(match.referenzen || []), ...(result.referenzen || [])].filter((v, i, a) => a.indexOf(v) === i) };
             const dbFields = { ...stateFields, letters: [...(match.letters || []).map(l => ({ ...l, document: l.document ? { mediaType: l.document.mediaType, isImage: l.document.isImage, isPdf: l.document.isPdf, fileName: l.document.fileName } : null })), nlForDb] };
-
-            const { error } = await dbUpdateProject(match.id, dbFields);
-            if (error) {
-              console.error("DB save failed:", error);
-              alert("⚠️ Speicherung fehlgeschlagen!\n\nFehler: " + (error.message || JSON.stringify(error)));
-            }
             setProjects(projects.map(p => p.id === match.id ? { ...p, ...stateFields } : p));
             setSavedToProject(match);
+            if (user?.id) { try { await dbUpdateProject(match.id, dbFields); } catch (e) { console.warn("DB update failed:", e); } }
           } else {
+            // Create new project
             const newProject = {
               name: result.projektname || (result.betreff ? `${result.betreff}` : `${result.dokumenttyp || result.kategorie} — ${result.behoerde}`),
               category: result.kategorie || "Sonstiges",
@@ -1762,25 +1668,29 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
               dokumenttyp: result.dokumenttyp || null,
               letters: [nlForDb],
             };
-            const { data, error } = await dbCreateProject(user.id, newProject);
-            if (data) {
-              const saved = { ...data, referenzen: data.referenzen || [], letters: [nl] };
-              setProjects(prev => [saved, ...prev]);
-              setSavedToProject(saved);
-            } else {
-              const errMsg = error?.message || error?.code || JSON.stringify(error) || "Unbekannter Fehler";
-              console.error("DB create failed:", error);
-              alert("⚠️ Projekt konnte nicht in der Datenbank gespeichert werden!\n\nFehler: " + errMsg + "\n\nMögliche Ursachen:\n• Supabase ENV-Variablen fehlen in Vercel\n• RLS-Policies in Supabase nicht korrekt\n• User-Profil nicht angelegt (Trigger-Problem)\n\nDer Brief geht beim Reload verloren!");
-              // Show in UI but mark as local
-              const local = { ...newProject, id: "LOCAL_" + Date.now(), letters: [nl], _isLocal: true };
-              setProjects(prev => [local, ...prev]);
-              setSavedToProject(local);
+            let saved = null;
+            if (user?.id) {
+              try {
+                const { data, error } = await dbCreateProject(user.id, newProject);
+                if (data) {
+                  saved = { ...data, referenzen: data.referenzen || [], letters: [nl] };
+                } else {
+                  console.warn("DB create failed:", error);
+                }
+              } catch (e) { console.warn("DB create exception:", e); }
             }
+            // Always save to state (from DB or locally)
+            if (!saved) { saved = { ...newProject, id: "local_" + Date.now(), letters: [nl] }; }
+            setProjects(prev => [saved, ...prev]);
+            setSavedToProject(saved);
           }
         }
       } catch (e) {
         console.error("Project save error:", e);
-        alert("⚠️ Schwerer Fehler beim Speichern: " + e.message);
+        // Emergency fallback: still create a local project
+        const fallback = { id: "local_" + Date.now(), name: result.projektname || result.behoerde || "Neuer Vorgang", category: result.kategorie || "Sonstiges", status: "offen", ampel: result.ampel || "gelb", behoerde: result.behoerde || "Unbekannt", frist: null, aktenzeichen: "", referenzen: [], letters: [nl] };
+        setProjects(prev => [fallback, ...prev]);
+        setSavedToProject(fallback);
       }
     }
     setAnalyzing(false);
@@ -1954,8 +1864,8 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
     ) : (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16 }}>
         {projects.map(p => (
-          <Card key={p.id} hover onClick={() => { setActiveProject(p); setView("project"); }} style={{ cursor: "pointer", border: p._isLocal ? `2px solid ${brand.warning}` : undefined }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}><AmpelBadge level={p.ampel} /><div style={{ display: "flex", gap: 4 }}>{p._isLocal && <Badge color={brand.warning} bg={`${brand.warning}15`}>⚠ Nicht gespeichert</Badge>}<Badge color={brand.textMuted} bg={brand.bgMuted}>{p.category}</Badge></div></div>
+          <Card key={p.id} hover onClick={() => { setActiveProject(p); setView("project"); }} style={{ cursor: "pointer" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}><AmpelBadge level={p.ampel} /><Badge color={brand.textMuted} bg={brand.bgMuted}>{p.category}</Badge></div>
             <h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, margin: "0 0 6px" }}>{p.name}</h3>
             <p style={{ fontSize: 13, color: brand.textMuted, margin: "0 0 12px" }}>{p.behoerde}{p.aktenzeichen ? ` · Az: ${p.aktenzeichen}` : ""}</p>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: brand.textMuted }}><span>{p.letters.length} Brief(e)</span>{p.frist && <span style={{ color: brand.danger, fontWeight: 600 }}>Frist: {p.frist.split("-").reverse().join(".")}</span>}</div>
@@ -2047,67 +1957,27 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
         <div key={l.id} style={{ position: "relative", marginBottom: 20 }}>
           <div style={{ position: "absolute", left: -32, top: 4, width: 24, height: 24, borderRadius: "50%", background: l.direction === "eingehend" ? brand.info : brand.success, display: "flex", alignItems: "center", justifyContent: "center" }}>{l.direction === "eingehend" ? <Download size={12} color="#fff" /> : <Send size={12} color="#fff" />}</div>
           <Card><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}><div style={{ display: "flex", gap: 6 }}><Badge color={l.direction === "eingehend" ? brand.info : brand.success} bg={l.direction === "eingehend" ? `${brand.info}15` : `${brand.success}15`}>{l.direction === "eingehend" ? "Eingehend" : "Ausgehend"}</Badge><Badge color="#8b5cf6" bg="#8b5cf610">{l.type}</Badge></div><span style={{ fontSize: 13, color: brand.textMuted }}>{l.date}</span></div><h4 style={{ fontSize: 16, fontWeight: 700, color: brand.text, margin: "0 0 6px" }}>{l.betreff || l.type}</h4><p style={{ fontSize: 14, color: brand.textMuted, lineHeight: 1.6, margin: "0 0 8px" }}>{l.summary}</p>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {l.document && <button onClick={(e) => { e.stopPropagation(); setShowDocument(l.document); }} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 6, border: `1px solid ${brand.borderLight}`, background: brand.bgMuted, color: brand.primary, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{l.document.isImage ? <Image size={13} /> : <File size={13} />} {l.document.fileName || "Dokument anzeigen"}</button>}
-              {l.letterText && <button onClick={(e) => { e.stopPropagation(); setEditorResult(l.letterText); setEditorIntent(""); setEditorAktenzeichen(activeProject.aktenzeichen || ""); setLetterSaved(true); setEditMode(false); setShowEditor(true); }} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 6, border: `1px solid ${brand.success}30`, background: `${brand.success}08`, color: brand.success, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}><Eye size={13} /> Brief anzeigen / bearbeiten</button>}
-            </div>
+            {l.document && <button onClick={(e) => { e.stopPropagation(); setShowDocument(l.document); }} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 6, border: `1px solid ${brand.borderLight}`, background: brand.bgMuted, color: brand.primary, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{l.document.isImage ? <Image size={13} /> : <File size={13} />} {l.document.fileName || "Dokument anzeigen"}</button>}
           </Card>
         </div>
       ))}
     </div>
     {activeProject.letters.length === 0 && <Card style={{ textAlign: "center", padding: 40 }}><Camera size={40} style={{ color: brand.borderLight, marginBottom: 12 }} /><p style={{ color: brand.textMuted }}>Noch keine Briefe. Lade den ersten Brief hoch!</p></Card>}
-    <Modal open={showEditor} onClose={() => { setShowEditor(false); setEditorResult(""); setEditorIntent(""); setEditMode(false); setRefineInstruction(""); setLetterSaved(false); }} title="Professionellen Antwortbrief erstellen (DIN 5008)" wide>
+    <Modal open={showEditor} onClose={() => { setShowEditor(false); setEditorResult(""); setEditorIntent(""); }} title="Professionellen Antwortbrief erstellen (DIN 5008)" wide>
       {!profile.strasse && <div style={{ padding: 12, borderRadius: 8, background: `${brand.warning}08`, border: `1px solid ${brand.warning}25`, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><AlertTriangle size={16} style={{ color: brand.warning }} /><span style={{ fontSize: 13, color: brand.accentHover }}>Absender fehlt! <span style={{ textDecoration: "underline", cursor: "pointer" }} onClick={() => { setShowEditor(false); setView("settings"); }}>Einstellungen öffnen</span></span></div>}
-      {!editorResult && <>
-        <Input label="Aktenzeichen / Geschäftszeichen" value={editorAktenzeichen} onChange={setEditorAktenzeichen} placeholder="z.B. 205/12345/2026" icon={FileText} />
-        <Input label="Dein Anliegen (so detailliert wie möglich)" textarea value={editorIntent} onChange={setEditorIntent} placeholder="z.B. Einspruch gegen den Steuerbescheid — Werbungskosten in Höhe von 2.340€ wurden nicht berücksichtigt. Belege liegen bei." />
-        <div style={{ marginBottom: 16 }}><label style={{ display: "block", marginBottom: 6, fontSize: 14, fontWeight: 600 }}>Ton:</label><div style={{ display: "flex", gap: 8 }}>{[["sachlich","Sachlich & formal"],["fordernd","Bestimmt & fordernd"],["freundlich","Freundlich & kooperativ"]].map(([t,l]) => <button key={t} onClick={() => setEditorTone(t)} style={{ padding: "8px 14px", borderRadius: 8, border: `1.5px solid ${editorTone === t ? brand.primary : brand.borderLight}`, background: editorTone === t ? brand.bgMuted : "#fff", color: editorTone === t ? brand.primary : brand.textMuted, fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{l}</button>)}</div></div>
-        <div style={{ padding: 12, borderRadius: 8, background: brand.bgMuted, marginBottom: 16, fontSize: 13, color: brand.textMuted }}>
-          <strong style={{ color: brand.text }}>Absender:</strong> {fullName}{fullAddress ? `, ${profile.strasse}, ${profile.plz} ${profile.ort}` : " (nicht hinterlegt)"} · <strong style={{ color: brand.text }}>An:</strong> {activeProject?.behoerde || "—"} · <strong style={{ color: brand.text }}>Format:</strong> DIN 5008 mit Rechtsverweisen
-        </div>
-        <Btn onClick={handleGenerateLetter} style={{ width: "100%" }}>{editorLoading ? <><RefreshCw size={16} style={{ animation: "spin 1s linear infinite" }} /> Wird erstellt...</> : <><Scale size={16} /> Brief generieren (DIN 5008)</>}</Btn>
-      </>}
-
-      {editorResult && <div>
-        {/* Status badge */}
-        {letterSaved && <div style={{ padding: 12, borderRadius: 8, background: `${brand.success}08`, border: `1px solid ${brand.success}30`, marginBottom: 12, display: "flex", alignItems: "center", gap: 10 }}>
-          <CheckCircle size={18} style={{ color: brand.success }} />
-          <span style={{ fontSize: 14, fontWeight: 600, color: brand.success }}>Brief im Projekt "{activeProject?.name}" gespeichert</span>
-        </div>}
-
-        {/* Editor or Preview */}
-        {editMode ? (
-          <textarea value={editorResult} onChange={e => { setEditorResult(e.target.value); setLetterSaved(false); }}
-            style={{ width: "100%", minHeight: 500, padding: 28, background: "#fff", border: `2px solid ${brand.primary}`, borderRadius: 4, fontFamily: "'Courier New', monospace", fontSize: 13, lineHeight: 1.9, color: brand.text, outline: "none", resize: "vertical", fontWeight: "normal" }} />
-        ) : (
-          <div style={{ padding: 28, background: "#fff", border: `1px solid ${brand.borderLight}`, borderRadius: 4, fontFamily: "'Courier New', monospace", fontSize: 13, lineHeight: 1.9, whiteSpace: "pre-wrap", color: brand.text, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>{editorResult}</div>
-        )}
-
-        {/* KI Refinement Box */}
-        {!editMode && <div style={{ marginTop: 16, padding: 16, borderRadius: 12, background: `${brand.accent}06`, border: `1px solid ${brand.accent}25` }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-            <Sparkles size={16} style={{ color: brand.accent }} />
-            <span style={{ fontSize: 14, fontWeight: 700, color: brand.text }}>Per KI anpassen</span>
-          </div>
-          <Input value={refineInstruction} onChange={setRefineInstruction} textarea
-            placeholder="z.B. 'Mach den Ton etwas freundlicher' oder 'Füge einen Hinweis auf § 355 BGB hinzu' oder 'Verkürze den Brief um die Hälfte'" />
-          <Btn variant="accent" size="sm" onClick={handleRefineLetter} disabled={refineLoading || !refineInstruction.trim()} style={{ marginTop: 4 }}>
-            {refineLoading ? <><RefreshCw size={14} style={{ animation: "spin 1s linear infinite" }} /> Überarbeite...</> : <><Sparkles size={14} /> Brief anpassen</>}
-          </Btn>
-        </div>}
-
-        {/* Action Buttons */}
+      <Input label="Aktenzeichen / Geschäftszeichen" value={editorAktenzeichen} onChange={setEditorAktenzeichen} placeholder="z.B. 205/12345/2026" icon={FileText} />
+      <Input label="Dein Anliegen (so detailliert wie möglich)" textarea value={editorIntent} onChange={setEditorIntent} placeholder="z.B. Einspruch gegen den Steuerbescheid — Werbungskosten in Höhe von 2.340€ wurden nicht berücksichtigt. Belege liegen bei." />
+      <div style={{ marginBottom: 16 }}><label style={{ display: "block", marginBottom: 6, fontSize: 14, fontWeight: 600 }}>Ton:</label><div style={{ display: "flex", gap: 8 }}>{[["sachlich","Sachlich & formal"],["fordernd","Bestimmt & fordernd"],["freundlich","Freundlich & kooperativ"]].map(([t,l]) => <button key={t} onClick={() => setEditorTone(t)} style={{ padding: "8px 14px", borderRadius: 8, border: `1.5px solid ${editorTone === t ? brand.primary : brand.borderLight}`, background: editorTone === t ? brand.bgMuted : "#fff", color: editorTone === t ? brand.primary : brand.textMuted, fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{l}</button>)}</div></div>
+      <div style={{ padding: 12, borderRadius: 8, background: brand.bgMuted, marginBottom: 16, fontSize: 13, color: brand.textMuted }}>
+        <strong style={{ color: brand.text }}>Absender:</strong> {fullName}{fullAddress ? `, ${profile.strasse}, ${profile.plz} ${profile.ort}` : " (nicht hinterlegt)"} · <strong style={{ color: brand.text }}>An:</strong> {activeProject?.behoerde || "—"} · <strong style={{ color: brand.text }}>Format:</strong> DIN 5008 mit Rechtsverweisen
+      </div>
+      <Btn onClick={handleGenerateLetter} style={{ width: "100%" }}>{editorLoading ? <><RefreshCw size={16} style={{ animation: "spin 1s linear infinite" }} /> Wird erstellt...</> : <><Scale size={16} /> Brief generieren (DIN 5008)</>}</Btn>
+      {editorResult && <div style={{ marginTop: 20 }}>
+        <div style={{ padding: 28, background: "#fff", border: `1px solid ${brand.borderLight}`, borderRadius: 4, fontFamily: "'Courier New', monospace", fontSize: 13, lineHeight: 1.9, whiteSpace: "pre-wrap", color: brand.text, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>{editorResult}</div>
         <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
-          <Btn variant={editMode ? "primary" : "outline"} size="sm" onClick={() => setEditMode(!editMode)}>
-            <Edit3 size={14} /> {editMode ? "Bearbeitung abschließen" : "Manuell bearbeiten"}
-          </Btn>
-          {!letterSaved && <Btn variant="primary" size="sm" onClick={handleSaveLetterToProject}>
-            <CheckCircle size={14} /> Im Projekt speichern
-          </Btn>}
-          <Btn variant="accent" size="sm" onClick={() => window.print()}><Printer size={14} /> Drucken</Btn>
-          <Btn variant="outline" size="sm" onClick={() => { const b = new Blob([editorResult], { type: "text/plain;charset=utf-8" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = `Brief_${activeProject?.name?.replace(/\s/g,"_") || "Antwort"}_${new Date().toISOString().split("T")[0]}.txt`; a.click(); }}><Download size={14} /> Datei</Btn>
-          <Btn variant="ghost" size="sm" onClick={() => { navigator.clipboard?.writeText(editorResult); alert("Kopiert!"); }}><FileText size={14} /> Kopieren</Btn>
-          <Btn variant="ghost" size="sm" onClick={() => { setEditorResult(""); setEditorIntent(""); setEditMode(false); setLetterSaved(false); }}>Neuen Brief</Btn>
+          <Btn variant="accent" onClick={() => window.print()}><Printer size={14} /> Drucken</Btn>
+          <Btn variant="outline" onClick={() => { const b = new Blob([editorResult], { type: "text/plain;charset=utf-8" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = `Brief_${activeProject?.name?.replace(/\s/g,"_") || "Antwort"}_${new Date().toISOString().split("T")[0]}.txt`; a.click(); }}><Download size={14} /> Speichern</Btn>
+          <Btn variant="ghost" onClick={() => { navigator.clipboard?.writeText(editorResult); alert("Kopiert!"); }}><FileText size={14} /> Kopieren</Btn>
         </div>
       </div>}
     </Modal>
@@ -2162,46 +2032,6 @@ function AdminPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
   const [dbData, setDbData] = useState({ users: [], projects: [], usage: [] });
-  const [editUser, setEditUser] = useState(null);
-  const [editForm, setEditForm] = useState({ plan: "free", discount_percent: 0, custom_limit: "", admin_notes: "", granted_until: "", subscription_active: false });
-  const [editSaving, setEditSaving] = useState(false);
-
-  const openEditUser = (u) => {
-    setEditUser(u);
-    setEditForm({
-      plan: u.plan || "free",
-      discount_percent: u.discount_percent || 0,
-      custom_limit: u.custom_limit || "",
-      admin_notes: u.admin_notes || "",
-      granted_until: u.granted_until || "",
-      subscription_active: u.subscription_active || false,
-    });
-  };
-
-  const handleSaveEditUser = async () => {
-    if (!editUser) return;
-    setEditSaving(true);
-    try {
-      const updates = {
-        plan: editForm.plan,
-        discount_percent: parseInt(editForm.discount_percent) || 0,
-        custom_limit: editForm.custom_limit ? parseInt(editForm.custom_limit) : null,
-        admin_notes: editForm.admin_notes || null,
-        granted_until: editForm.granted_until || null,
-        subscription_active: editForm.subscription_active,
-      };
-      const { error } = await supabase.from('profiles').update(updates).eq('id', editUser.id);
-      if (error) {
-        alert("Fehler beim Speichern: " + (error.message || JSON.stringify(error)));
-      } else {
-        setEditUser(null);
-        setRefreshKey(k => k + 1);
-      }
-    } catch (e) {
-      alert("Fehler: " + e.message);
-    }
-    setEditSaving(false);
-  };
 
   // ── Load REAL data from Supabase ──
   useEffect(() => {
@@ -2265,10 +2095,6 @@ function AdminPage() {
         registered: u.created_at ? new Date(u.created_at).toLocaleDateString("de-DE") : "—",
         is_admin: u.is_admin,
         subscription_active: u.subscription_active,
-        discount_percent: u.discount_percent || 0,
-        custom_limit: u.custom_limit,
-        admin_notes: u.admin_notes,
-        granted_until: u.granted_until,
       };
     });
 
@@ -2302,7 +2128,6 @@ function AdminPage() {
       setRefreshKey(k => k + 1);
     } catch (e) { alert("Fehler: " + e.message); }
   };
-
 
   if (loading) return <div style={{ padding: 60, textAlign: "center" }}>
     <RefreshCw size={32} style={{ animation: "spin 1s linear infinite", color: brand.primary }} />
@@ -2370,18 +2195,11 @@ function AdminPage() {
         <tbody>{filtered.map(u => <tr key={u.id} style={{ borderBottom: `1px solid ${brand.borderLight}` }}>
           <td style={{ padding: "14px 16px", fontWeight: 600 }}>{u.name}{u.is_admin && <span style={{ marginLeft: 6, fontSize: 10, padding: "2px 6px", borderRadius: 4, background: brand.accent, color: "#fff", fontWeight: 700 }}>ADMIN</span>}</td>
           <td style={{ padding: "14px 16px", color: brand.textMuted }}>{u.email}</td>
-          <td style={{ padding: "14px 16px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
-              <Badge color={u.plan === "lifetime" ? brand.accent : u.plan === "pro" ? brand.accent : u.plan === "plus" ? brand.primary : brand.textMuted} bg={u.plan === "lifetime" ? `${brand.accent}15` : u.plan === "pro" ? `${brand.accent}15` : u.plan === "plus" ? brand.bgMuted : `${brand.textMuted}10`}>{u.plan.toUpperCase()}</Badge>
-              {u.discount_percent > 0 && <Badge color={brand.warning} bg={`${brand.warning}15`}>-{u.discount_percent}%</Badge>}
-              {u.granted_until && <span title={`Gültig bis ${u.granted_until}`} style={{ fontSize: 10, color: brand.textMuted }}>⏱</span>}
-              {u.admin_notes && <span title={u.admin_notes} style={{ fontSize: 10, cursor: "help" }}>📝</span>}
-            </div>
-          </td>
+          <td style={{ padding: "14px 16px" }}><Badge color={u.plan === "pro" ? brand.accent : u.plan === "plus" ? brand.primary : brand.textMuted} bg={u.plan === "pro" ? `${brand.accent}15` : u.plan === "plus" ? brand.bgMuted : `${brand.textMuted}10`}>{u.plan.toUpperCase()}</Badge></td>
           <td style={{ padding: "14px 16px" }}>{u.projects}</td>
           <td style={{ padding: "14px 16px" }}>{u.analyses} <span style={{ color: brand.textMuted, fontSize: 12 }}>({u.analysesThisMonth} Mo.)</span></td>
           <td style={{ padding: "14px 16px", color: brand.textMuted, fontSize: 12 }}>{u.registered}</td>
-          <td style={{ padding: "14px 16px" }}><div style={{ display: "flex", gap: 8 }}><button onClick={() => openEditUser(u)} title="Bearbeiten" style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Edit3 size={16} color={brand.primary} /></button>{!u.is_admin && <button onClick={() => handleDeleteUser(u.id, u.email)} title="Löschen" style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Trash2 size={16} color={brand.danger} /></button>}</div></td>
+          <td style={{ padding: "14px 16px" }}>{!u.is_admin && <button onClick={() => handleDeleteUser(u.id, u.email)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Trash2 size={16} color={brand.danger} /></button>}</td>
         </tr>)}</tbody>
       </table></div></Card>}
     </>}
@@ -2391,91 +2209,6 @@ function AdminPage() {
       <Card><h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>System-Status</h3><div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>{[["Frontend","Online"],["Supabase DB","Online"],["Anthropic API","Online"],["Mollie","Online"]].map(([s,st]) => <div key={s} style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}><span style={{ fontWeight: 600 }}>{s}</span><span style={{ display: "flex", alignItems: "center", gap: 6, color: brand.success, fontWeight: 600 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: brand.success }} />{st}</span></div>)}</div></Card>
       <Card><h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, marginTop: 0 }}>Datenbank</h3><div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>{[["Nutzer", totalUsers],["Projekte", totalProjects],["Usage-Einträge", dbData.usage.length]].map(([l,v]) => <div key={l} style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}><span style={{ color: brand.textMuted }}>{l}</span><span style={{ fontWeight: 700 }}>{v}</span></div>)}</div></Card>
     </div>}
-
-    {/* ── EDIT USER MODAL ── */}
-    <Modal open={!!editUser} onClose={() => setEditUser(null)} title={`Nutzer bearbeiten: ${editUser?.name || ""}`} wide>
-      {editUser && <div>
-        <div style={{ padding: 14, borderRadius: 10, background: brand.bgMuted, marginBottom: 20 }}>
-          <div style={{ fontSize: 13, color: brand.textMuted, marginBottom: 4 }}>E-Mail</div>
-          <div style={{ fontSize: 15, fontWeight: 600, color: brand.text, marginBottom: 8 }}>{editUser.email}</div>
-          <div style={{ display: "flex", gap: 16, fontSize: 13, color: brand.textMuted, flexWrap: "wrap" }}>
-            <span><strong style={{ color: brand.text }}>{editUser.projects}</strong> Projekte</span>
-            <span><strong style={{ color: brand.text }}>{editUser.analyses}</strong> Analysen gesamt</span>
-            <span><strong style={{ color: brand.text }}>{editUser.analysesThisMonth}</strong> diesen Monat</span>
-            <span>Registriert: <strong style={{ color: brand.text }}>{editUser.registered}</strong></span>
-          </div>
-        </div>
-
-        <h4 style={{ fontSize: 16, fontWeight: 700, color: brand.text, margin: "0 0 12px" }}>Plan zuweisen</h4>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8, marginBottom: 16 }}>
-          {[["free","Free","0€"],["plus","Plus","4,99€/Mo"],["pro","Pro","9,99€/Mo"],["business","Business","29,99€/Mo"],["lifetime","Lifetime","Einmalig"]].map(([id, name, price]) => (
-            <button key={id} onClick={() => setEditForm(f => ({ ...f, plan: id, subscription_active: id !== "free" }))} style={{ padding: "12px 8px", borderRadius: 10, border: `2px solid ${editForm.plan === id ? brand.primary : brand.borderLight}`, background: editForm.plan === id ? brand.bgMuted : "#fff", cursor: "pointer", fontFamily: "inherit", textAlign: "center" }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: editForm.plan === id ? brand.primary : brand.text }}>{name}</div>
-              <div style={{ fontSize: 11, color: brand.textMuted, marginTop: 2 }}>{price}</div>
-            </button>
-          ))}
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-          <div>
-            <label style={{ display: "block", marginBottom: 6, fontSize: 14, fontWeight: 600, color: brand.text }}>Rabatt für nächste Zahlung (%)</label>
-            <input type="number" min="0" max="100" value={editForm.discount_percent} onChange={e => setEditForm(f => ({ ...f, discount_percent: e.target.value }))} placeholder="0" style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${brand.borderLight}`, fontSize: 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box" }} />
-            <p style={{ fontSize: 11, color: brand.textMuted, margin: "4px 0 0" }}>Wird bei nächster Mollie-Zahlung angewandt</p>
-          </div>
-          <div>
-            <label style={{ display: "block", marginBottom: 6, fontSize: 14, fontWeight: 600, color: brand.text }}>Individuelles Limit (Analysen/Monat)</label>
-            <input type="number" min="0" value={editForm.custom_limit} onChange={e => setEditForm(f => ({ ...f, custom_limit: e.target.value }))} placeholder="leer = Plan-Standard" style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${brand.borderLight}`, fontSize: 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box" }} />
-            <p style={{ fontSize: 11, color: brand.textMuted, margin: "4px 0 0" }}>Überschreibt das Plan-Limit</p>
-          </div>
-        </div>
-
-        <div style={{ marginBottom: 16 }}>
-          <label style={{ display: "block", marginBottom: 6, fontSize: 14, fontWeight: 600, color: brand.text }}>Premium-Zugang gültig bis (optional)</label>
-          <input type="date" value={editForm.granted_until} onChange={e => setEditForm(f => ({ ...f, granted_until: e.target.value }))} style={{ padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${brand.borderLight}`, fontSize: 14, fontFamily: "inherit", outline: "none" }} />
-          <p style={{ fontSize: 11, color: brand.textMuted, margin: "4px 0 0" }}>Bei Lifetime leer lassen. Bei Test-Zugang: Ablaufdatum setzen.</p>
-        </div>
-
-        <div style={{ marginBottom: 16 }}>
-          <label style={{ display: "block", marginBottom: 6, fontSize: 14, fontWeight: 600, color: brand.text }}>Admin-Notizen (intern, für dich)</label>
-          <textarea value={editForm.admin_notes} onChange={e => setEditForm(f => ({ ...f, admin_notes: e.target.value }))} placeholder="z.B. 'Test-Account', 'VIP-Kunde — 50% Rabatt versprochen', 'Beschwerde am 15.04.'" rows="3" style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${brand.borderLight}`, fontSize: 14, fontFamily: "inherit", outline: "none", resize: "vertical", boxSizing: "border-box" }} />
-        </div>
-
-        <div style={{ padding: 10, borderRadius: 8, background: `${brand.warning}10`, border: `1px solid ${brand.warning}30`, marginBottom: 20, fontSize: 12, color: brand.text }}>
-          ⚠️ <strong>Hinweis:</strong> Plan-Änderungen hier umgehen Mollie. Bei "Lifetime" oder kostenpflichtigen Plänen erfolgt KEINE Abbuchung — der Zugang wird einfach freigeschaltet (z.B. für Test-Accounts oder Kulanz). Bestehende Mollie-Abos müssen separat in Mollie verwaltet werden.
-        </div>
-
-        <h4 style={{ fontSize: 16, fontWeight: 700, color: brand.text, margin: "0 0 12px" }}>Schnellaktionen</h4>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 24 }}>
-          <Btn variant="accent" size="sm" onClick={() => setEditForm(f => ({ ...f, plan: "lifetime", subscription_active: true, granted_until: "", admin_notes: (f.admin_notes ? f.admin_notes + "\n" : "") + `Lifetime geschenkt am ${new Date().toLocaleDateString("de-DE")}` }))} disabled={editSaving}>
-            🎁 Lifetime schenken
-          </Btn>
-          <Btn variant="outline" size="sm" onClick={() => setEditForm(f => ({ ...f, plan: "pro", subscription_active: true, granted_until: new Date(Date.now() + 30*24*60*60*1000).toISOString().split("T")[0], admin_notes: (f.admin_notes ? f.admin_notes + "\n" : "") + `30-Tage Pro-Test ab ${new Date().toLocaleDateString("de-DE")}` }))} disabled={editSaving}>
-            🆓 30-Tage Pro-Test
-          </Btn>
-          <Btn variant="outline" size="sm" onClick={() => setEditForm(f => ({ ...f, discount_percent: 50 }))} disabled={editSaving}>
-            💰 50% Rabatt setzen
-          </Btn>
-          <Btn variant="outline" size="sm" onClick={async () => {
-            if (!confirm("Analysen-Zähler dieses Nutzers für aktuellen Monat auf 0 setzen?")) return;
-            const cm = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
-            try {
-              await supabase.from('usage_tracking').delete().eq('user_id', editUser.id).eq('month', cm);
-              alert("Zähler zurückgesetzt.");
-              setRefreshKey(k => k + 1);
-            } catch (e) { alert("Fehler: " + e.message); }
-          }} disabled={editSaving}>
-            <RefreshCw size={14} /> Zähler zurücksetzen
-          </Btn>
-        </div>
-
-        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", paddingTop: 16, borderTop: `1px solid ${brand.borderLight}` }}>
-          <Btn variant="ghost" onClick={() => setEditUser(null)} disabled={editSaving}>Abbrechen</Btn>
-          <Btn variant="primary" onClick={handleSaveEditUser} disabled={editSaving}>
-            {editSaving ? <><RefreshCw size={14} style={{ animation: "spin 1s linear infinite" }} /> Speichere...</> : <><CheckCircle size={14} /> Änderungen speichern</>}
-          </Btn>
-        </div>
-      </div>}
-    </Modal>
   </div>;
 }
 

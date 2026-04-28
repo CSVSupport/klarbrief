@@ -143,17 +143,23 @@ create policy "Admins can delete all usage"
   using (exists (select 1 from profiles where id = auth.uid() and is_admin = true));
 
 -- ─── AUTO-CREATE PROFILE ON SIGNUP ─────────────────
-create or replace function handle_new_user()
+-- WICHTIG: search_path explizit auf public setzen, sonst läuft der
+-- Trigger im search_path des supabase_auth_admin (= auth) und findet
+-- die Tabelle "profiles" nicht → "Database error saving new user".
+create or replace function public.handle_new_user()
 returns trigger
-language plpgsql security definer
+language plpgsql
+security definer
+set search_path = public
 as $$
 begin
-  insert into profiles (id, email, is_admin)
+  insert into public.profiles (id, email, is_admin)
   values (
     new.id,
     new.email,
     new.email = 'info@csv-support.de'
-  );
+  )
+  on conflict (id) do nothing;
   return new;
 end;
 $$;

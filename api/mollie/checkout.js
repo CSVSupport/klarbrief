@@ -20,9 +20,10 @@ export default async function handler(req, res) {
   if (!amount) return res.status(400).json({ error: 'Invalid plan' });
 
   const isLifetime = plan === 'lifetime';
-  const baseUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : process.env.BASE_URL || 'https://klarbrief24.de';
+  // Always use the canonical production domain for redirect/webhook URLs.
+  // Do NOT use VERCEL_URL — that is the deployment-specific *.vercel.app
+  // host and would break Mollie redirects + bind webhooks to ephemeral URLs.
+  const baseUrl = process.env.BASE_URL || 'https://klarbrief24.de';
 
   try {
     // Step 1: Create or find Mollie customer
@@ -38,14 +39,17 @@ export default async function handler(req, res) {
     }
 
     // Step 2: Create payment
-    // - Lifetime → oneoff, redirect to /danke
-    // - Plus/Pro → first payment to establish mandate for recurring
+    // - Lifetime → oneoff (Einmalzahlung)
+    // - Plus/Pro/Business → first payment establishes mandate for recurring
+    // Both flows redirect to /#danke?plan=X&customerId=Y so the SPA can
+    // show the ThankYou page and refresh the user's plan from Supabase.
+    const sharedRedirect = `${baseUrl}/#danke?plan=${plan}&customerId=${customer.id}`;
     const paymentBody = isLifetime ? {
       amount: { currency: 'EUR', value: amount },
       customerId: customer.id,
       sequenceType: 'oneoff',
       description: `${planNames[plan]} — Einmalzahlung`,
-      redirectUrl: `${baseUrl}/#danke?plan=${plan}&customerId=${customer.id}`,
+      redirectUrl: sharedRedirect,
       webhookUrl: `${baseUrl}/api/mollie/webhook`,
       metadata: { plan, email, customerId: customer.id },
     } : {
@@ -53,7 +57,7 @@ export default async function handler(req, res) {
       customerId: customer.id,
       sequenceType: 'first',
       description: `${planNames[plan]} — Ersteinrichtung`,
-      redirectUrl: `${baseUrl}/#/payment-success?plan=${plan}&customerId=${customer.id}`,
+      redirectUrl: sharedRedirect,
       webhookUrl: `${baseUrl}/api/mollie/webhook`,
       metadata: { plan, email, customerId: customer.id },
     };

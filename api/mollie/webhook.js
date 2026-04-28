@@ -14,9 +14,8 @@ export default async function handler(req, res) {
   const { id } = req.body;
   if (!id) return res.status(400).json({ error: 'No payment ID' });
 
-  const baseUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : process.env.BASE_URL || 'https://klarbrief24.de';
+  // Use the canonical production domain — see checkout.js for rationale.
+  const baseUrl = process.env.BASE_URL || 'https://klarbrief24.de';
 
   // Init Supabase admin client (uses service role key for server-side updates)
   const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -112,6 +111,31 @@ export default async function handler(req, res) {
     // ── RECURRING PAYMENT: Subsequent monthly charges ──
     if (payment.sequenceType === 'recurring') {
       console.log(`Recurring payment ${id}: ${payment.status} for ${email}`);
+      // Refresh next_payment_date so the dashboard shows the correct date
+      // without waiting for the periodic Mollie status poll.
+      if (supabase && customerId) {
+        try {
+          const subsResp = await fetch(
+            `https://api.mollie.com/v2/customers/${customerId}/subscriptions`,
+            { headers: { 'Authorization': `Bearer ${apiKey}` } }
+          );
+          const subsData = await subsResp.json();
+          const active = subsData?._embedded?.subscriptions?.find(s => s.status === 'active');
+          if (active) {
+            const { error } = await supabase
+              .from('profiles')
+              .update({
+                subscription_active: true,
+                mollie_subscription_id: active.id,
+                next_payment_date: active.nextPaymentDate || null,
+              })
+              .eq('mollie_customer_id', customerId);
+            if (error) console.error('Recurring profile update error:', error);
+          }
+        } catch (e) {
+          console.error('Recurring refresh failed:', e);
+        }
+      }
       return res.status(200).end();
     }
 

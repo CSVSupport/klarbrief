@@ -1478,35 +1478,8 @@ function DashboardPage({ user, setUser, setPage }) {
     if (user?.id) { try { await dbIncrementUsage(user.id, currentMonth); } catch {} }
   };
 
-  // Handle return from Mollie checkout
-  useEffect(() => {
-    const hash = window.location.hash;
-    if (hash.includes("payment-success")) {
-      const params = new URLSearchParams(hash.split("?")[1] || "");
-      const plan = params.get("plan");
-      const customerId = params.get("customerId");
-      if (plan && customerId) {
-        updateProfile("plan", plan);
-        updateProfile("mollieCustomerId", customerId);
-        updateProfile("pendingPlan", null);
-        // Check subscription status after short delay (webhook needs time)
-        setTimeout(async () => {
-          try {
-            const resp = await fetch("/api/mollie/status", {
-              method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ customerId }),
-            });
-            const data = await resp.json();
-            if (data.active) {
-              updateProfile("mollieSubscription", { active: true, subscriptionId: data.subscriptionId, nextPaymentDate: data.nextPaymentDate });
-            }
-          } catch (e) { console.warn("Status check failed:", e); }
-        }, 3000);
-        window.location.hash = "";
-        alert("Zahlung erfolgreich! Dein " + (plan === "pro" ? "Pro" : "Plus") + "-Abo ist jetzt aktiv.");
-      }
-    }
-  }, []);
+  // (Mollie return handling moved to top-level App so it works regardless of
+  // which page the user happens to be on after the redirect.)
 
   // Periodic subscription status check (on mount)
   useEffect(() => {
@@ -2393,34 +2366,84 @@ function OfferPage({ setPage }) {
 // ═══════════════════════════════════════════
 // THANK YOU PAGE
 // ═══════════════════════════════════════════
-function ThankYouPage({ setPage }) {
+function ThankYouPage({ setPage, paymentReturn, isLoggedIn }) {
+  const plan = paymentReturn?.plan || null;
+  const customerId = paymentReturn?.customerId || null;
+
+  // Status: "pending" while waiting for the webhook to upgrade the profile,
+  // "active" once we confirm via /api/mollie/status (recurring) or the
+  // profile is already on the paid plan (lifetime).
+  const [status, setStatus] = useState(plan ? "pending" : "active");
+
+  const planLabels = {
+    plus: { name: "KlarBrief24 Plus", period: "monatliches Plus-Abo", color: brand.primary },
+    pro: { name: "KlarBrief24 Pro", period: "monatliches Pro-Abo", color: brand.primary },
+    business: { name: "KlarBrief24 Business", period: "Business-Abo", color: brand.primary },
+    lifetime: { name: "KlarBrief24 Lifetime", period: "Lifetime-Zugang", color: brand.accent },
+  };
+  const label = plan ? planLabels[plan] : null;
+
+  // Poll for webhook completion. The webhook updates the user's profile in
+  // Supabase to the paid plan; for recurring plans we also confirm via the
+  // status endpoint so the UI can show "aktiv" instead of "wird verarbeitet".
   useEffect(() => {
-    // Parse Mollie return params if present
-    const params = new URLSearchParams(window.location.search);
-    const orderId = params.get("order_id") || params.get("payment_id");
-    if (orderId) {
-      console.log("Mollie Bestellung:", orderId);
+    if (!plan || !customerId) return;
+    if (plan === "lifetime") {
+      // No subscription for lifetime; webhook flips profiles.plan to 'lifetime'.
+      // Give it a few seconds, then mark as active. (Profile reload happens on
+      // the next dashboard visit.)
+      const t = setTimeout(() => setStatus("active"), 4000);
+      return () => clearTimeout(t);
     }
-  }, []);
+    let cancelled = false;
+    let tries = 0;
+    const poll = async () => {
+      tries++;
+      try {
+        const resp = await fetch("/api/mollie/status", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ customerId }),
+        });
+        const data = await resp.json();
+        if (!cancelled && data.active) { setStatus("active"); return; }
+      } catch {}
+      if (!cancelled && tries < 6) setTimeout(poll, 2500);
+      else if (!cancelled) setStatus("active"); // give up gracefully — webhook will catch up
+    };
+    const initial = setTimeout(poll, 2500);
+    return () => { cancelled = true; clearTimeout(initial); };
+  }, [plan, customerId]);
 
   return <div style={{ minHeight: "80vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "60px 20px", background: `linear-gradient(180deg, ${brand.bgMuted} 0%, ${brand.bg} 100%)` }}>
     <div style={{ maxWidth: 640, width: "100%", textAlign: "center" }}>
       <div style={{ width: 100, height: 100, borderRadius: "50%", background: `${brand.success}15`, border: `3px solid ${brand.success}`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 32px", animation: "fadeIn 0.6s ease" }}>
-        <CheckCircle size={52} style={{ color: brand.success }} />
+        {status === "pending"
+          ? <RefreshCw size={48} style={{ color: brand.success, animation: "spin 1s linear infinite" }} />
+          : <CheckCircle size={52} style={{ color: brand.success }} />}
       </div>
-      <h1 style={{ fontSize: "clamp(32px, 5vw, 44px)", fontWeight: 900, color: brand.text, margin: "0 0 16px" }}>Vielen Dank für deinen Kauf! 🎉</h1>
+      <h1 style={{ fontSize: "clamp(32px, 5vw, 44px)", fontWeight: 900, color: brand.text, margin: "0 0 16px" }}>
+        {status === "pending" ? "Zahlung wird bestätigt..." : "Vielen Dank für deinen Kauf! 🎉"}
+      </h1>
       <p style={{ fontSize: 18, color: brand.textMuted, lineHeight: 1.7, margin: "0 0 32px" }}>
-        Deine Bestellung wurde erfolgreich abgeschlossen. Du hast jetzt <strong style={{ color: brand.primary }}>unbegrenzten Lifetime-Zugang</strong> zu KlarBrief24.
+        {status === "pending"
+          ? <>Mollie hat deine Zahlung verarbeitet. Wir aktivieren gerade dein <strong style={{ color: label?.color || brand.primary }}>{label?.name || "Abo"}</strong>...</>
+          : label
+            ? <>Deine Bestellung wurde erfolgreich abgeschlossen. Du hast jetzt <strong style={{ color: label.color }}>{label.period === "Lifetime-Zugang" ? "unbegrenzten Lifetime-Zugang" : `dein ${label.period}`}</strong> zu KlarBrief24.</>
+            : <>Deine Bestellung wurde erfolgreich abgeschlossen.</>}
       </p>
 
       <Card style={{ padding: 32, marginBottom: 32, textAlign: "left" }}>
         <h3 style={{ fontSize: 20, fontWeight: 700, color: brand.text, margin: "0 0 20px" }}>So geht's weiter:</h3>
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          {[
+          {(isLoggedIn ? [
+            { n: "1", t: "Bestätigung erhalten", d: "Du erhältst eine Zahlungsbestätigung per E-Mail mit deinem Rechnungsbeleg." },
+            { n: "2", t: "Plan ist aktiv", d: "Dein Tarif ist im Dashboard sichtbar — du kannst sofort weitermachen." },
+            { n: "3", t: "Losschreiben", d: "Fotografiere deinen nächsten Brief — die KI übersetzt ihn in Sekunden." },
+          ] : [
             { n: "1", t: "Bestätigung erhalten", d: "Du erhältst eine Zahlungsbestätigung per E-Mail mit deinem Rechnungsbeleg." },
             { n: "2", t: "Account erstellen", d: "Registriere dich mit der E-Mail-Adresse, die du beim Kauf verwendet hast." },
             { n: "3", t: "Losschreiben", d: "Fotografiere deinen ersten Brief — die KI übersetzt ihn in Sekunden." },
-          ].map(s => (
+          ]).map(s => (
             <div key={s.n} style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
               <div style={{ width: 36, height: 36, borderRadius: "50%", background: brand.primary, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, flexShrink: 0 }}>{s.n}</div>
               <div><h4 style={{ fontSize: 16, fontWeight: 700, color: brand.text, margin: "0 0 4px" }}>{s.t}</h4><p style={{ fontSize: 14, color: brand.textMuted, lineHeight: 1.6, margin: 0 }}>{s.d}</p></div>
@@ -2430,7 +2453,9 @@ function ThankYouPage({ setPage }) {
       </Card>
 
       <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap", marginBottom: 24 }}>
-        <Btn size="lg" onClick={() => setPage("register")}><UserPlus size={18} /> Jetzt Account erstellen</Btn>
+        {isLoggedIn
+          ? <Btn size="lg" onClick={() => setPage("dashboard")}>Zum Dashboard</Btn>
+          : <Btn size="lg" onClick={() => setPage("register")}><UserPlus size={18} /> Jetzt Account erstellen</Btn>}
         <Btn size="lg" variant="outline" onClick={() => setPage("home")}>Zur Startseite</Btn>
       </div>
 
@@ -2502,7 +2527,26 @@ function LegalPage({ page }) {
 // MAIN APP
 // ═══════════════════════════════════════════
 export default function App() {
-  const [page, setPage] = useState("home");
+  // Detect Mollie return on first paint so the user immediately lands on the
+  // ThankYou page (not on "home"). Supports both #danke (current) and the
+  // legacy #/payment-success path so any in-flight redirects keep working.
+  const initialReturn = (() => {
+    if (typeof window === "undefined") return { page: "home", paymentReturn: null };
+    const h = window.location.hash || "";
+    if (h.includes("danke") || h.includes("payment-success")) {
+      const qs = h.split("?")[1] || "";
+      const params = new URLSearchParams(qs);
+      const plan = params.get("plan");
+      const customerId = params.get("customerId");
+      // Clean the URL — keep history tidy and prevent re-triggering on reload.
+      try { history.replaceState(null, "", window.location.pathname); } catch {}
+      return { page: "danke", paymentReturn: plan || customerId ? { plan, customerId } : null };
+    }
+    return { page: "home", paymentReturn: null };
+  })();
+
+  const [page, setPage] = useState(initialReturn.page);
+  const [paymentReturn] = useState(initialReturn.paymentReturn);
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [showCookies, setShowCookies] = useState(() => !localStorage.getItem("kb_cookies_accepted"));
@@ -2574,7 +2618,7 @@ export default function App() {
       case "dashboard": return isLoggedIn ? <DashboardPage user={user} setUser={setUser} setPage={setPage} /> : <AuthPage mode="login" setPage={setPage} onLogin={setUser} />;
       case "admin": return isLoggedIn && isAdmin ? <AdminPage /> : <AuthPage mode="login" setPage={setPage} onLogin={setUser} />;
       case "angebot": return <OfferPage setPage={setPage} />;
-      case "danke": return <ThankYouPage setPage={setPage} />;
+      case "danke": return <ThankYouPage setPage={setPage} paymentReturn={paymentReturn} isLoggedIn={isLoggedIn} />;
       case "impressum": case "datenschutz": case "agb": case "widerruf": return <LegalPage page={page} />;
       default: return <HomePage setPage={setPage} />;
     }

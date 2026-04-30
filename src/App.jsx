@@ -1392,6 +1392,7 @@ function DashboardPage({ user, setUser, setPage }) {
   const [activeProject, setActiveProject] = useState(null);
   const [showNewProject, setShowNewProject] = useState(false);
   const [moveLetter, setMoveLetter] = useState(null); // { letter, fromProjectId } when moving
+  const [viewLetter, setViewLetter] = useState(null);  // letter object when opened for detail view
   const [showAnalyze, setShowAnalyze] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
   const [view, setView] = useState("overview");
@@ -1955,15 +1956,16 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
       {activeProject.letters.map(l => (
         <div key={l.id} style={{ position: "relative", marginBottom: 20 }}>
           <div style={{ position: "absolute", left: -32, top: 4, width: 24, height: 24, borderRadius: "50%", background: l.direction === "eingehend" ? brand.info : brand.success, display: "flex", alignItems: "center", justifyContent: "center" }}>{l.direction === "eingehend" ? <Download size={12} color="#fff" /> : <Send size={12} color="#fff" />}</div>
-          <Card>
+          <Card hover onClick={() => setViewLetter(l)} style={{ cursor: "pointer" }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, gap: 8 }}>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}><Badge color={l.direction === "eingehend" ? brand.info : brand.success} bg={l.direction === "eingehend" ? `${brand.info}15` : `${brand.success}15`}>{l.direction === "eingehend" ? "Eingehend" : "Ausgehend"}</Badge><Badge color="#8b5cf6" bg="#8b5cf610">{l.type}</Badge></div>
               <span style={{ fontSize: 13, color: brand.textMuted, flexShrink: 0 }}>{l.date}</span>
             </div>
             <h4 style={{ fontSize: 16, fontWeight: 700, color: brand.text, margin: "0 0 6px" }}>{l.betreff || l.type}</h4>
-            <p style={{ fontSize: 14, color: brand.textMuted, lineHeight: 1.6, margin: "0 0 8px" }}>{l.summary}</p>
+            <p style={{ fontSize: 14, color: brand.textMuted, lineHeight: 1.6, margin: "0 0 12px", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{l.summary}</p>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-              {l.document && <button onClick={(e) => { e.stopPropagation(); setShowDocument(l.document); }} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 6, border: `1px solid ${brand.borderLight}`, background: brand.bgMuted, color: brand.primary, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{l.document.isImage ? <Image size={13} /> : <File size={13} />} {l.document.fileName || "Dokument anzeigen"}</button>}
+              <button onClick={(e) => { e.stopPropagation(); setViewLetter(l); }} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 6, border: `1.5px solid ${brand.primary}`, background: `${brand.primary}10`, color: brand.primary, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}><FileText size={13} /> Brief öffnen</button>
+              {l.document && <button onClick={(e) => { e.stopPropagation(); setShowDocument(l.document); }} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 6, border: `1px solid ${brand.borderLight}`, background: brand.bgMuted, color: brand.primary, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{l.document.isImage ? <Image size={13} /> : <File size={13} />} Dokument</button>}
               {projects.length > 1 && <button onClick={(e) => { e.stopPropagation(); setMoveLetter({ letter: l, fromProjectId: activeProject.id }); }} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 6, border: `1px solid ${brand.borderLight}`, background: "#fff", color: brand.textMuted, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}><Folder size={13} /> Verschieben</button>}
               <button onClick={async (e) => {
                 e.stopPropagation();
@@ -1973,7 +1975,7 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
                 setActiveProject(updated);
                 setProjects(ps => ps.map(p => p.id === activeProject.id ? updated : p));
                 try { await dbUpdateProject(activeProject.id, { letters: newLetters }); } catch (err) { console.error("Letter delete failed:", err); }
-              }} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 6, border: `1px solid ${brand.borderLight}`, background: "#fff", color: brand.textMuted, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}><Trash2 size={13} /> Brief löschen</button>
+              }} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 6, border: `1px solid ${brand.borderLight}`, background: "#fff", color: brand.textMuted, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}><Trash2 size={13} /> Löschen</button>
             </div>
           </Card>
         </div>
@@ -2014,6 +2016,78 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
         </div>
       </div>}
     </Modal>
+    {/* View Letter Modal — full re-read of an existing letter */}
+    <Modal open={!!viewLetter} onClose={() => setViewLetter(null)} title={viewLetter?.betreff || viewLetter?.type || "Brief"} wide>
+      {viewLetter && <div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+          <Badge color={viewLetter.direction === "eingehend" ? brand.info : brand.success} bg={viewLetter.direction === "eingehend" ? `${brand.info}15` : `${brand.success}15`}>{viewLetter.direction === "eingehend" ? "Eingehend" : "Ausgehend"}</Badge>
+          <Badge color="#8b5cf6" bg="#8b5cf610">{viewLetter.type}</Badge>
+          <Badge color={brand.textMuted} bg={brand.bgMuted}>{viewLetter.date}</Badge>
+        </div>
+
+        <h3 style={{ fontSize: 14, fontWeight: 700, color: brand.text, margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>In einfachen Worten</h3>
+        <div style={{ padding: 18, background: brand.bgMuted, borderRadius: 12, marginBottom: 20 }}>
+          <p style={{ margin: 0, fontSize: 15, lineHeight: 1.7, color: brand.text, whiteSpace: "pre-wrap" }}>{viewLetter.summary}</p>
+        </div>
+
+        {viewLetter.originalText && <>
+          <h3 style={{ fontSize: 14, fontWeight: 700, color: brand.text, margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Originaltext</h3>
+          <details style={{ marginBottom: 20 }}>
+            <summary style={{ cursor: "pointer", fontSize: 13, color: brand.primary, fontWeight: 600, padding: "6px 0" }}>Original anzeigen</summary>
+            <div style={{ marginTop: 8, padding: 16, background: "#fff", border: `1px solid ${brand.borderLight}`, borderRadius: 10, maxHeight: 280, overflowY: "auto" }}>
+              <pre style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: brand.textMuted, fontFamily: "inherit", whiteSpace: "pre-wrap", wordWrap: "break-word" }}>{viewLetter.originalText}</pre>
+            </div>
+          </details>
+        </>}
+
+        {viewLetter.document && (
+          <>
+            <h3 style={{ fontSize: 14, fontWeight: 700, color: brand.text, margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Originaldokument</h3>
+            <div style={{ marginBottom: 20 }}>
+              {viewLetter.document.isImage && viewLetter.document.base64 && (
+                <div style={{ borderRadius: 10, overflow: "hidden", border: `1px solid ${brand.borderLight}` }}>
+                  <img src={`data:${viewLetter.document.mediaType};base64,${viewLetter.document.base64}`} alt={viewLetter.document.fileName || "Dokument"} style={{ width: "100%", height: "auto", display: "block" }} />
+                </div>
+              )}
+              {viewLetter.document.isPdf && viewLetter.document.base64 && (
+                <iframe src={`data:application/pdf;base64,${viewLetter.document.base64}`} style={{ width: "100%", height: 500, border: `1px solid ${brand.borderLight}`, borderRadius: 10 }} title={viewLetter.document.fileName || "PDF"} />
+              )}
+              {!viewLetter.document.base64 && (
+                <p style={{ fontSize: 13, color: brand.textMuted, fontStyle: "italic" }}>
+                  {viewLetter.document.fileName || "Dokument"} — Vorschau nicht verfügbar (Datei aus älterer Version, Original wurde nicht gespeichert).
+                </p>
+              )}
+              {viewLetter.document.base64 && (
+                <div style={{ marginTop: 10 }}>
+                  <Btn variant="outline" size="sm" onClick={() => {
+                    const link = document.createElement("a");
+                    link.href = `data:${viewLetter.document.mediaType};base64,${viewLetter.document.base64}`;
+                    link.download = viewLetter.document.fileName || "dokument";
+                    link.click();
+                  }}><Download size={14} /> Herunterladen</Btn>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", paddingTop: 16, borderTop: `1px solid ${brand.borderLight}` }}>
+          {projects.length > 1 && <Btn variant="outline" size="sm" onClick={() => { const l = viewLetter; setViewLetter(null); setMoveLetter({ letter: l, fromProjectId: activeProject.id }); }}><Folder size={14} /> Verschieben</Btn>}
+          <Btn variant="outline" size="sm" onClick={async () => {
+            if (!confirm("Diesen Brief wirklich aus dem Projekt löschen?")) return;
+            const id = viewLetter.id;
+            const newLetters = activeProject.letters.filter(x => x.id !== id);
+            const updated = { ...activeProject, letters: newLetters };
+            setActiveProject(updated);
+            setProjects(ps => ps.map(p => p.id === activeProject.id ? updated : p));
+            setViewLetter(null);
+            try { await dbUpdateProject(activeProject.id, { letters: newLetters }); } catch (err) { console.error("Letter delete failed:", err); }
+          }} style={{ borderColor: brand.danger, color: brand.danger }}><Trash2 size={14} /> Löschen</Btn>
+          <Btn size="sm" onClick={() => setViewLetter(null)} style={{ marginLeft: "auto" }}>Schließen</Btn>
+        </div>
+      </div>}
+    </Modal>
+
     {/* Move Letter Modal */}
     <Modal open={!!moveLetter} onClose={() => setMoveLetter(null)} title="Brief in anderes Projekt verschieben">
       {moveLetter && <div>

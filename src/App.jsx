@@ -1391,6 +1391,7 @@ function DashboardPage({ user, setUser, setPage }) {
   const [projects, setProjects] = useState([]);
   const [activeProject, setActiveProject] = useState(null);
   const [showNewProject, setShowNewProject] = useState(false);
+  const [moveLetter, setMoveLetter] = useState(null); // { letter, fromProjectId } when moving
   const [showAnalyze, setShowAnalyze] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
   const [view, setView] = useState("overview");
@@ -1837,8 +1838,22 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
     ) : (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16 }}>
         {projects.map(p => (
-          <Card key={p.id} hover onClick={() => { setActiveProject(p); setView("project"); }} style={{ cursor: "pointer" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}><AmpelBadge level={p.ampel} /><Badge color={brand.textMuted} bg={brand.bgMuted}>{p.category}</Badge></div>
+          <Card key={p.id} hover onClick={() => { setActiveProject(p); setView("project"); }} style={{ cursor: "pointer", position: "relative" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12, gap: 8 }}>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}><AmpelBadge level={p.ampel} /><Badge color={brand.textMuted} bg={brand.bgMuted}>{p.category}</Badge></div>
+              <button
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  if (!confirm(`Projekt "${p.name}" mit allen Briefen wirklich löschen? Das kann nicht rückgängig gemacht werden.`)) return;
+                  setProjects(prev => prev.filter(x => x.id !== p.id));
+                  try { await dbDeleteProject(p.id); } catch (err) { console.error("Delete failed:", err); alert("Konnte Projekt nicht löschen — bitte erneut versuchen."); }
+                }}
+                aria-label="Projekt löschen"
+                style={{ background: "none", border: "none", padding: 6, borderRadius: 6, cursor: "pointer", color: brand.textMuted, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+                onMouseEnter={e => { e.currentTarget.style.color = brand.danger; e.currentTarget.style.background = `${brand.danger}10`; }}
+                onMouseLeave={e => { e.currentTarget.style.color = brand.textMuted; e.currentTarget.style.background = "none"; }}
+              ><Trash2 size={16} /></button>
+            </div>
             <h3 style={{ fontSize: 18, fontWeight: 700, color: brand.text, margin: "0 0 6px" }}>{p.name}</h3>
             <p style={{ fontSize: 13, color: brand.textMuted, margin: "0 0 12px" }}>{p.behoerde}{p.aktenzeichen ? ` · Az: ${p.aktenzeichen}` : ""}</p>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: brand.textMuted }}><span>{p.letters.length} Brief(e)</span>{p.frist && <span style={{ color: brand.danger, fontWeight: 600 }}>Frist: {p.frist.split("-").reverse().join(".")}</span>}</div>
@@ -1898,7 +1913,18 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
     <button onClick={() => { setView("overview"); setActiveProject(null); }} style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer", color: brand.primary, fontWeight: 600, fontSize: 14, padding: 0, marginBottom: 24, fontFamily: "inherit" }}><ArrowLeft size={16} /> Zurück</button>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 20 }}>
       <div><div style={{ display: "flex", gap: 10, marginBottom: 8 }}><AmpelBadge level={activeProject.ampel} /><Badge>{activeProject.category}</Badge></div><h1 style={{ fontSize: 28, fontWeight: 800, color: brand.text, margin: "0 0 4px" }}>{activeProject.name}</h1><p style={{ fontSize: 14, color: brand.textMuted, margin: 0 }}>{activeProject.behoerde}</p></div>
-      <div style={{ display: "flex", gap: 10 }}><Btn size="sm" onClick={() => { if (!canAnalyze) { setShowUpgrade(true); } else { setShowAnalyze(true); } }}><Camera size={14} /> Brief hinzufügen</Btn><Btn size="sm" variant="accent" onClick={() => { setEditorAktenzeichen(activeProject.aktenzeichen || ""); setShowEditor(true); }}><Edit3 size={14} /> Antwort schreiben</Btn></div>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <Btn size="sm" onClick={() => { if (!canAnalyze) { setShowUpgrade(true); } else { setShowAnalyze(true); } }}><Camera size={14} /> Brief hinzufügen</Btn>
+        <Btn size="sm" variant="accent" onClick={() => { setEditorAktenzeichen(activeProject.aktenzeichen || ""); setShowEditor(true); }}><Edit3 size={14} /> Antwort schreiben</Btn>
+        <Btn size="sm" variant="outline" onClick={async () => {
+          if (!confirm(`Projekt "${activeProject.name}" mit ${activeProject.letters.length} Brief(en) wirklich löschen?`)) return;
+          const id = activeProject.id;
+          setProjects(prev => prev.filter(x => x.id !== id));
+          setActiveProject(null);
+          setView("overview");
+          try { await dbDeleteProject(id); } catch (err) { console.error("Delete failed:", err); alert("Konnte Projekt nicht löschen — bitte erneut versuchen."); }
+        }} style={{ borderColor: brand.danger, color: brand.danger }}><Trash2 size={14} /> Projekt löschen</Btn>
+      </div>
     </div>
     <Card style={{ padding: 16, marginBottom: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: activeProject.referenzen?.length > 0 ? 12 : 0 }}>
@@ -1929,8 +1955,26 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
       {activeProject.letters.map(l => (
         <div key={l.id} style={{ position: "relative", marginBottom: 20 }}>
           <div style={{ position: "absolute", left: -32, top: 4, width: 24, height: 24, borderRadius: "50%", background: l.direction === "eingehend" ? brand.info : brand.success, display: "flex", alignItems: "center", justifyContent: "center" }}>{l.direction === "eingehend" ? <Download size={12} color="#fff" /> : <Send size={12} color="#fff" />}</div>
-          <Card><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}><div style={{ display: "flex", gap: 6 }}><Badge color={l.direction === "eingehend" ? brand.info : brand.success} bg={l.direction === "eingehend" ? `${brand.info}15` : `${brand.success}15`}>{l.direction === "eingehend" ? "Eingehend" : "Ausgehend"}</Badge><Badge color="#8b5cf6" bg="#8b5cf610">{l.type}</Badge></div><span style={{ fontSize: 13, color: brand.textMuted }}>{l.date}</span></div><h4 style={{ fontSize: 16, fontWeight: 700, color: brand.text, margin: "0 0 6px" }}>{l.betreff || l.type}</h4><p style={{ fontSize: 14, color: brand.textMuted, lineHeight: 1.6, margin: "0 0 8px" }}>{l.summary}</p>
-            {l.document && <button onClick={(e) => { e.stopPropagation(); setShowDocument(l.document); }} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 6, border: `1px solid ${brand.borderLight}`, background: brand.bgMuted, color: brand.primary, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{l.document.isImage ? <Image size={13} /> : <File size={13} />} {l.document.fileName || "Dokument anzeigen"}</button>}
+          <Card>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, gap: 8 }}>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}><Badge color={l.direction === "eingehend" ? brand.info : brand.success} bg={l.direction === "eingehend" ? `${brand.info}15` : `${brand.success}15`}>{l.direction === "eingehend" ? "Eingehend" : "Ausgehend"}</Badge><Badge color="#8b5cf6" bg="#8b5cf610">{l.type}</Badge></div>
+              <span style={{ fontSize: 13, color: brand.textMuted, flexShrink: 0 }}>{l.date}</span>
+            </div>
+            <h4 style={{ fontSize: 16, fontWeight: 700, color: brand.text, margin: "0 0 6px" }}>{l.betreff || l.type}</h4>
+            <p style={{ fontSize: 14, color: brand.textMuted, lineHeight: 1.6, margin: "0 0 8px" }}>{l.summary}</p>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              {l.document && <button onClick={(e) => { e.stopPropagation(); setShowDocument(l.document); }} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 6, border: `1px solid ${brand.borderLight}`, background: brand.bgMuted, color: brand.primary, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{l.document.isImage ? <Image size={13} /> : <File size={13} />} {l.document.fileName || "Dokument anzeigen"}</button>}
+              {projects.length > 1 && <button onClick={(e) => { e.stopPropagation(); setMoveLetter({ letter: l, fromProjectId: activeProject.id }); }} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 6, border: `1px solid ${brand.borderLight}`, background: "#fff", color: brand.textMuted, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}><Folder size={13} /> Verschieben</button>}
+              <button onClick={async (e) => {
+                e.stopPropagation();
+                if (!confirm("Diesen Brief wirklich aus dem Projekt löschen?")) return;
+                const newLetters = activeProject.letters.filter(x => x.id !== l.id);
+                const updated = { ...activeProject, letters: newLetters };
+                setActiveProject(updated);
+                setProjects(ps => ps.map(p => p.id === activeProject.id ? updated : p));
+                try { await dbUpdateProject(activeProject.id, { letters: newLetters }); } catch (err) { console.error("Letter delete failed:", err); }
+              }} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 6, border: `1px solid ${brand.borderLight}`, background: "#fff", color: brand.textMuted, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}><Trash2 size={13} /> Brief löschen</button>
+            </div>
           </Card>
         </div>
       ))}
@@ -1970,6 +2014,51 @@ NUR fertigen Brieftext ausgeben. Kein JSON, kein Markdown außer **Betreff:**. A
         </div>
       </div>}
     </Modal>
+    {/* Move Letter Modal */}
+    <Modal open={!!moveLetter} onClose={() => setMoveLetter(null)} title="Brief in anderes Projekt verschieben">
+      {moveLetter && <div>
+        <p style={{ fontSize: 14, color: brand.textMuted, margin: "0 0 16px" }}>Wähle das Zielprojekt für <strong style={{ color: brand.text }}>{moveLetter.letter.betreff || moveLetter.letter.type}</strong>:</p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 360, overflowY: "auto" }}>
+          {projects.filter(p => p.id !== moveLetter.fromProjectId).map(target => (
+            <button key={target.id} onClick={async () => {
+              const letter = moveLetter.letter;
+              const fromId = moveLetter.fromProjectId;
+              const fromProj = projects.find(p => p.id === fromId);
+              if (!fromProj) { setMoveLetter(null); return; }
+              const newFromLetters = fromProj.letters.filter(x => x.id !== letter.id);
+              const newToLetters = [...(target.letters || []), letter];
+              // Optimistic local update
+              setProjects(ps => ps.map(p => {
+                if (p.id === fromId) return { ...p, letters: newFromLetters };
+                if (p.id === target.id) return { ...p, letters: newToLetters };
+                return p;
+              }));
+              if (activeProject?.id === fromId) setActiveProject(prev => ({ ...prev, letters: newFromLetters }));
+              setMoveLetter(null);
+              // Persist to Supabase
+              try {
+                await Promise.all([
+                  dbUpdateProject(fromId, { letters: newFromLetters }),
+                  dbUpdateProject(target.id, { letters: newToLetters }),
+                ]);
+              } catch (err) { console.error("Move failed:", err); alert("Verschieben fehlgeschlagen — bitte erneut versuchen."); }
+            }} style={{ textAlign: "left", padding: "12px 16px", borderRadius: 10, border: `1.5px solid ${brand.borderLight}`, background: "#fff", cursor: "pointer", fontFamily: "inherit", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = brand.primary; e.currentTarget.style.background = brand.bgMuted; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = brand.borderLight; e.currentTarget.style.background = "#fff"; }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: brand.text }}>{target.name}</div>
+                <div style={{ fontSize: 12, color: brand.textMuted }}>{target.behoerde || target.category} · {target.letters.length} Brief(e)</div>
+              </div>
+              <ArrowRight size={16} style={{ color: brand.primary, flexShrink: 0 }} />
+            </button>
+          ))}
+          {projects.filter(p => p.id !== moveLetter.fromProjectId).length === 0 && (
+            <p style={{ fontSize: 14, color: brand.textMuted, textAlign: "center", padding: 20 }}>Du hast noch keine anderen Projekte. Erstelle zuerst ein neues Projekt.</p>
+          )}
+        </div>
+      </div>}
+    </Modal>
+
     {/* Document Viewer */}
     <Modal open={!!showDocument} onClose={() => setShowDocument(null)} title={showDocument?.fileName || "Dokument"} wide>
       {showDocument && <div>
